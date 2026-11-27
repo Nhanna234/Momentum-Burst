@@ -6,7 +6,8 @@ Finds stocks breaking out of a tight base with a strong, high-volume day, follow
 
 | File | What it is |
 |---|---|
-| `scan_burst.py` | The program you run |
+| `app.py` | The web page (Streamlit): pick the universe and the day, see the lists and charts, download the Excel |
+| `scan_burst.py` | The same scan from the command line |
 | `burst_rules.py` | All the rules and every number they use (the `PARAMS` table at the top). No internet |
 | `burst_data.py` | Downloads: index lists (NSE Indices), price bands (NSE), daily candles (Yahoo Finance) |
 | `tests/test_rules.py` | Checks the rules; needs no internet |
@@ -29,6 +30,19 @@ Finds stocks breaking out of a tight base with a strong, high-volume day, follow
 4. Open the Excel file in the `output` folder. The command window also prints a short summary.
 
 **Timing for buying at the close.** Run it after 3:30 pm. If Yahoo already has today's final candle, buy in NSE's post-close session at the closing price. If the summary warns that today's candle isn't on Yahoo yet, run it again a few minutes later. Before 3:30 pm the list is provisional, because today's volume is incomplete.
+
+## Web page (Streamlit)
+
+On your PC: `streamlit run app.py` (the browser opens at http://localhost:8501).
+
+Online, on Streamlit Community Cloud (free):
+1. Go to share.streamlit.io and sign in with GitHub.
+2. Press **Create app**, then choose the repository `Nhanna234/Momentum-Burst`, branch `main`, main file `app.py`.
+3. Press **Deploy**. No secrets are needed.
+
+The page shows today's passed stocks and near misses, a candle chart of any of them (with the base high, the stop and the 65-day SMA marked), the Rules tab, and an Excel download. Pick an earlier day in the sidebar to check the rules on past charts. Prices are downloaded once and reused for 15 minutes; **Download fresh prices** forces a new download, which is useful just after 3:30 pm.
+
+Vercel cannot host this page: Streamlit needs a server that stays running, which Vercel does not provide.
 
 ## The Excel file
 
