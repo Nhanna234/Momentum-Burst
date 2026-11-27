@@ -25,7 +25,9 @@ CONSTITUENT_MIRRORS = ["https://niftyindices.com/IndexConstituent/{f}",
                        "https://nsearchives.nseindia.com/content/indices/{f}"]
 BAND_URLS = ["https://nsearchives.nseindia.com/content/equities/sec_list.csv",
              "https://nsearchives.nseindia.com/content/equities/sec_list_{d}.csv"]
-HISTORY_DAYS = 420              # calendar days of candles fetched: enough for the 65-day and 50-day windows
+HISTORY_DAYS = 2000             # calendar days of daily candles fetched (about 5.5 years), enough for monthly
+                                # bars: the monthly rules need 37 months of history before their first scan
+DAILY_BARS = 520                # the daily rules use only the last ~2 years, to keep memory use modest
 CACHE_MINUTES = 15              # a download younger than this is reused
 
 

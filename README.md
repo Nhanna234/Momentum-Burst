@@ -1,6 +1,6 @@
 # Momentum burst scanner (Indian market, daily)
 
-Finds stocks breaking out of a tight base with a strong, high-volume day, following the momentum burst idea from Stockbee's post ["How to identify good momentum burst and..."](https://stockbee.blogspot.com/2014/01/how-to-identify-good-momentum-burst-and.html), translated into exact rules for NSE stocks. Rule sheet v1 was approved on 26 Nov 2026.
+Finds stocks breaking out of a tight base with a strong, high-volume day (or week, or month), following the momentum burst idea from Stockbee's post ["How to identify good momentum burst and..."](https://stockbee.blogspot.com/2014/01/how-to-identify-good-momentum-burst-and.html), translated into exact rules for NSE stocks. Rule sheet v1 was approved on 26 Nov 2026.
 
 ## Files
 
@@ -27,8 +27,9 @@ Finds stocks breaking out of a tight base with a strong, high-volume day, follow
    python scan_burst.py                         (Nifty Total Market, latest day)
    python scan_burst.py --index "Nifty 500"
    python scan_burst.py --date 2026-11-20       (an earlier day, to check past charts)
+   python scan_burst.py --timeframe W           (weekly candles; M for monthly)
    ```
-   The first run downloads about 14 months of daily candles for every stock (one to three minutes for Total Market). Runs within 15 minutes of each other reuse that download.
+   The first run downloads about five and a half years of daily candles for every stock (a few minutes for Total Market); weekly and monthly candles are built from them. Runs within 15 minutes of each other reuse that download.
 4. Open the Excel file in the `output` folder. The command window also prints a short summary.
 
 **Timing for buying at the close.** Run it after 3:30 pm. If Yahoo already has today's final candle, buy in NSE's post-close session at the closing price. If the summary warns that today's candle isn't on Yahoo yet, run it again a few minutes later. Before 3:30 pm the list is provisional, because today's volume is incomplete.
@@ -40,7 +41,7 @@ Live at https://umme-abdullah.streamlit.app (Streamlit Community Cloud, main fil
 The screen is a React app in `frontend/`, built with Vite into `frontend/dist`, which Streamlit shows as a custom component. `app.py` loads the prices, runs the rules and sends the results to it (`payload.py` packs them); the React app sends back what the user picked (index, day or period) and Python reruns the scan.
 
 What it shows:
-- **Top bar:** universe (Total Market or Nifty 500), **One day** or **Period** (last 5, 10, 20 or 60 sessions, or your own dates), previous/next day, Refresh prices, Download Excel, light/dark theme, and the Rules page.
+- **Top bar:** timeframe (**Daily**, **Weekly** or **Monthly**), universe (Total Market or Nifty 500), **One day/week/month** or **Period** (last 5, 10, 20 or 60 sessions, or your own dates), previous/next day, Refresh prices, Download Excel, light/dark theme, and the Rules page.
 - **Summary:** for one day, how many stocks survive each layer of rules; for a period, totals and a bar for each day.
 - **List:** Passed and Near misses, searchable and sortable. Each row has the clean-chart score, the day's change, the risk to the stop, and a strip of 17 cells, one per rule (filled = passed), so you can see at a glance what a near miss failed.
 - **Detail:** key figures, a TradingView-style candle chart (lightweight-charts) with the base high, the stop, the 65-day SMA and the breakout marked, the 17 rules with the value each was judged on, and the score broken into its five parts. In a period, the chart runs up to 30 sessions past the breakout and the row shows the change since.
@@ -62,7 +63,28 @@ Vercel cannot host this app: Streamlit needs a server that stays running.
 - **Near misses:** stocks that made the breakout move (rules 5–9) and are liquid, but failed one or more other rules. The rules they failed are listed. Look at these to judge whether a rule is too strict.
 - **Settings:** every number used, so each file records the rules it was made with.
 
-## Rule sheet v1
+## Timeframes
+
+Weekly and monthly candles are built from the daily prices: a week runs Monday to Friday, a month is the calendar month, and each bar is dated by its last trading day. The same 17 rules apply to all three, with the windows counted in weeks or months and the moves widened (`PARAMS_W` and `PARAMS_M` in `burst_rules.py`). The daily rules use the last two years of prices; weekly and monthly use all five and a half.
+
+| Rule | Daily | Weekly | Monthly |
+|---|---|---|---|
+| 3 Liquidity | ₹1 crore a day, 20-day average | ₹5 crore a week, 10-week average | ₹21 crore a month, 6-month average |
+| 5 Big move | close ≥ 4% up | ≥ 8% up | ≥ 12% up |
+| 6 Volume | ≥ 1.5 × 50-day average | ≥ 1.5 × 20-week average | ≥ 1.5 × 12-month average |
+| 9 Range expansion | ≥ 1.5 × ATR20 | ≥ 1.5 × ATR10 | ≥ 1.3 × ATR10 |
+| 11 Base | 3–20 days, ≤ 15% deep | 3–12 weeks, ≤ 25% deep | 3–12 months, ≤ 35% deep |
+| 13 Contraction | last 5 days ≤ 0.8 × ATR50 | last 3 weeks ≤ 0.8 × ATR26 | last 3 months ≤ 0.8 × ATR24 |
+| 14, 16 Trend, extension | 65-day SMA, ≤ 25% above | 30-week SMA, ≤ 40% above | 12-month SMA, ≤ 60% above |
+| 15 Early | ≤ 1 earlier burst in 30 days | in 12 weeks | in 12 months |
+| 17 Not erratic | ≤ 3 days of 5%+ in 20 | ≤ 3 weeks of 10%+ in 12 | ≤ 3 months of 20%+ in 12 |
+| Score: calm volatility | ATR 2% full, 8% zero | 5% full, 18% zero | 8% full, 30% zero |
+
+The weekly and monthly numbers are reasoned starting values (27 Nov 2026), not tested by a backtest. While a week or month is still running, its candle is incomplete and the app says so.
+
+How far back you can scan: about 20 months on daily (the daily rules need four months of history first), about 4.5 years on weekly, and about 2.5 years on monthly (the monthly rules need 37 months of history first).
+
+## Rule sheet v1 (daily)
 
 Daily candles. "Today" = the breakout day. Windows exclude today unless stated. ATR20 = average daily range (high − low) over the 20 days before today.
 
@@ -105,7 +127,8 @@ Daily candles. "Today" = the breakout day. Windows exclude today unless stated. 
 
 `python tests/test_rules.py`:
 - A hand-built textbook breakout passes every rule. Versions of it built to break one rule each fail that rule.
-- A separate, slow version of every rule was written one stock and one day at a time. It was compared with the fast version on 40 random charts: 51,200 rule checks plus every score and base length, with no differences.
+- A separate, slow version of every rule was written one stock and one bar at a time, using each timeframe's numbers. It matches the fast version exactly: 51,200 daily rule checks on 40 random charts, and about 56,000 weekly and monthly checks on five-year charts, plus every score and base length.
+- Weekly and monthly candles are checked against the daily candles they are built from.
 
 The downloads (NSE and Yahoo) could not be tested where this was built: that machine had no access to those sites. The first real run is the test. If NSE's price-band file can't be read, the scan still runs, skips rule 4 and says so in the warnings.
 

@@ -55,7 +55,85 @@ PARAMS = {
     "atr_pct_full": 0.02,           # calm volatility: ATR20 / price 2% or less = full marks ...
     "atr_pct_zero": 0.08,           # ... 8% or more = zero
     "weights": {"smooth": 30, "tight": 20, "body": 20, "gaps": 15, "calm": 15},
+    "unit": "day", "units": "days",  # what one bar is called
 }
+
+# Weekly and monthly: the same 17 rules on weekly or monthly candles built from the daily ones. Windows are in
+# bars (weeks or months) and shortened so the rules can work on about five years of prices; moves, ranges and
+# limits are widened because a week or a month moves more than a day. These are reasoned starting values
+# (27 Nov 2026), to be tested, not settled facts.
+PARAMS_W = {**PARAMS, "unit": "week", "units": "weeks",
+    "min_traded_value": 5e7,        # rule 3: average weekly traded value >= Rs 5 crore (about Rs 1 crore a day)
+    "liq_window": 10,               #         over the last 10 weeks
+    "min_change": 0.08,             # rule 5: week's close >= 8% above last week's
+    "vol_avg_window": 20,           # rule 6: volume >= 1.5 x the 20-week average
+    "atr_window": 10,               # ATR10 (weeks)
+    "base_max": 12,                 # rule 11: base of 3 to 12 weeks ...
+    "base_max_depth": 0.25,         # ... at most 25% deep
+    "contraction_days": 3,          # rule 13: average range of the last 3 weeks <= 0.8 x ATR26
+    "atr_long_window": 26,
+    "sma_window": 30,               # rule 14/16: the 30-week SMA (about 150 trading days)
+    "prior_trigger_window": 12,     # rule 15: at most 1 earlier trigger week in the last 12
+    "max_extension": 0.40,          # rule 16: at most 40% above the 30-week SMA
+    "erratic_move": 0.10,           # rule 17: at most 3 weeks with a 10%+ move in the last 12
+    "erratic_window": 12,
+    "r2_window": 30, "body_window": 12, "gap_size": 0.05, "gap_window": 12, "gaps_for_zero": 3,
+    "base_depth_full": 0.06, "atr_pct_full": 0.05, "atr_pct_zero": 0.18,
+}
+PARAMS_M = {**PARAMS, "unit": "month", "units": "months",
+    "min_traded_value": 2.1e8,      # rule 3: average monthly traded value >= Rs 21 crore (about Rs 1 crore a day)
+    "liq_window": 6,                #         over the last 6 months
+    "min_change": 0.12,             # rule 5: month's close >= 12% above last month's
+    "vol_avg_window": 12,           # rule 6: volume >= 1.5 x the 12-month average
+    "range_mult": 1.3,              # rule 9: month's range >= 1.3 x ATR10 (months)
+    "atr_window": 10,
+    "base_max": 12,                 # rule 11: base of 3 to 12 months ...
+    "base_max_depth": 0.35,         # ... at most 35% deep
+    "contraction_days": 3,          # rule 13: average range of the last 3 months <= 0.8 x ATR24
+    "atr_long_window": 24,
+    "sma_window": 12,               # rule 14/16: the 12-month SMA
+    "prior_trigger_window": 12,     # rule 15: at most 1 earlier trigger month in the last 12
+    "max_extension": 0.60,          # rule 16: at most 60% above the 12-month SMA
+    "erratic_move": 0.20,           # rule 17: at most 3 months with a 20%+ move in the last 12
+    "erratic_window": 12,
+    "r2_window": 24, "body_window": 12, "gap_size": 0.08, "gap_window": 12, "gaps_for_zero": 3,
+    "base_depth_full": 0.10, "atr_pct_full": 0.08, "atr_pct_zero": 0.30,
+}
+TIMEFRAMES = {"D": ("Daily", PARAMS), "W": ("Weekly", PARAMS_W), "M": ("Monthly", PARAMS_M)}
+
+
+def to_timeframe(panel: dict, tf: str) -> dict:
+    """Daily candles -> weekly (Monday-Friday) or monthly candles: first open, highest high, lowest low, last
+    close, total volume. Each bar is dated by its last trading day, so the dates are real trading days."""
+    if tf == "D":
+        return panel
+    C = panel["Close"]
+    key = C.index.to_period("W-FRI" if tf == "W" else "M")
+    last_day = pd.Series(C.index, index=C.index).groupby(key).max()
+    agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+    out = {}
+    for f, how in agg.items():
+        g = panel[f].groupby(key)
+        x = getattr(g, how)() if how != "sum" else g.sum(min_count=1)
+        x.index = pd.DatetimeIndex(last_day.loc[x.index].values)
+        out[f] = x
+    return out
+
+
+def bar_is_complete(day, tf: str, now) -> bool:
+    """False while the week or month that ends with `day` is still running at `now` (IST): the bar is complete
+    once its last weekday has closed (after 3:35 pm) or a later week or month has started."""
+    if tf == "D":
+        return True
+    per = pd.Timestamp(day).to_period("W-FRI" if tf == "W" else "M")
+    last = per.end_time.normalize()
+    while last.weekday() >= 5:
+        last -= pd.Timedelta(days=1)
+    now = pd.Timestamp(now).tz_localize(None) if pd.Timestamp(now).tzinfo else pd.Timestamp(now)
+    if now.normalize() > last:
+        return True
+    return now.normalize() == last and (now.hour, now.minute) >= (15, 35)
+
 
 RULE_TEXT = {
     2: "Close below Rs {min_price:g}",
@@ -66,34 +144,50 @@ RULE_TEXT = {
     7: "Closed away from the high",
     8: "Red candle",
     9: "Range not expanded",
-    10: "Day before not quiet",
-    11: "No 3-20 day base",
+    10: "Bar before not quiet",
+    11: "No base",
     12: "Did not close above the base high",
     13: "No range contraction",
-    14: "Below the 65-day SMA",
+    14: "Below the {sma}-{unit} SMA",
     15: "Too many recent bursts",
-    16: "Extended above the 65-day SMA",
+    16: "Extended above the {sma}-{unit} SMA",
     17: "Erratic stock",
 }
-RULE_SHEET = [   # (number, layer, short name, full rule) as approved in rule sheet v1
-    (1, "A", "In the index", "Constituent of Nifty Total Market or Nifty 500"),
-    (2, "A", "Price", "Close at least ₹50"),
-    (3, "A", "Liquidity", "20-day average traded value at least ₹1 crore"),
-    (4, "A", "Price band", "Price band above 5%, or no band (F&O stocks)"),
-    (5, "B", "Big move", "Close at least 4% above yesterday's close"),
-    (6, "B", "Volume", "Volume above yesterday's and at least 1.5 x the 50-day average"),
-    (7, "B", "Strong close", "Close in the top 30% of the day's range"),
-    (8, "B", "Green candle", "Close above the open"),
-    (9, "B", "Range expansion", "Day's range at least 1.5 x ATR20"),
-    (10, "C", "Quiet day before", "Yesterday's range below 0.8 x ATR20, or yesterday closed lower"),
-    (11, "C", "Base", "A 3-20 day base whose high is at most 15% above its low"),
-    (12, "C", "Breakout", "Close above the base high"),
-    (13, "C", "Contraction", "Average range of the last 5 days at most 0.8 x ATR50"),
-    (14, "D", "Uptrend", "Close above the 65-day SMA"),
-    (15, "D", "Early in the move", "At most 1 earlier breakout move in the last 30 sessions"),
-    (16, "D", "Not extended", "Close at most 25% above the 65-day SMA"),
-    (17, "D", "Not erratic", "At most 3 days with a 5%+ move in the last 20 sessions"),
-]
+def rule_sheet(p: dict | None = None) -> list[tuple]:
+    """(number, layer, short name, full rule) for one timeframe, worded from its parameters."""
+    p = p or PARAMS
+    unit, units = p["unit"], p["units"]
+    pc = lambda x: f"{x * 100:g}%"
+    cr = lambda x: f"₹{x / 1e7:g} crore"
+    return [
+        (1, "A", "In the index", "Constituent of Nifty Total Market or Nifty 500"),
+        (2, "A", "Price", f"Close at least ₹{p['min_price']:g}"),
+        (3, "A", "Liquidity", f"Average traded value per {unit} over the last {p['liq_window']} {units} at least "
+                              f"{cr(p['min_traded_value'])}"),
+        (4, "A", "Price band", "Price band above 5%, or no band (F&O stocks)"),
+        (5, "B", "Big move", f"Close at least {pc(p['min_change'])} above the previous {unit}'s close"),
+        (6, "B", "Volume", f"Volume above the previous {unit}'s and at least {p['vol_mult']:g} x the "
+                           f"{p['vol_avg_window']}-{unit} average"),
+        (7, "B", "Strong close", f"Close in the top {pc(1 - p['min_close_range'])} of the {unit}'s range"),
+        (8, "B", "Green candle", "Close above the open"),
+        (9, "B", "Range expansion", f"The {unit}'s range at least {p['range_mult']:g} x ATR{p['atr_window']}"),
+        (10, "C", "Quiet bar before", f"The previous {unit}'s range below {p['quiet_range_mult']:g} x "
+                                      f"ATR{p['atr_window']}, or it closed lower"),
+        (11, "C", "Base", f"A {p['base_min']}-{p['base_max']} {unit} base whose high is at most "
+                          f"{pc(p['base_max_depth'])} above its low"),
+        (12, "C", "Breakout", "Close above the base high"),
+        (13, "C", "Contraction", f"Average range of the last {p['contraction_days']} {units} at most "
+                                 f"{p['contraction_mult']:g} x ATR{p['atr_long_window']}"),
+        (14, "D", "Uptrend", f"Close above the {p['sma_window']}-{unit} SMA"),
+        (15, "D", "Early in the move", f"At most {p['max_prior_triggers']} earlier breakout move in the last "
+                                       f"{p['prior_trigger_window']} {units}"),
+        (16, "D", "Not extended", f"Close at most {pc(p['max_extension'])} above the {p['sma_window']}-{unit} SMA"),
+        (17, "D", "Not erratic", f"At most {p['max_erratic_days']} {units} with a {pc(p['erratic_move'])}+ move "
+                                 f"in the last {p['erratic_window']} {units}"),
+    ]
+
+
+RULE_SHEET = rule_sheet()
 LAYERS = {"A": "Universe", "B": "Trigger", "C": "Setup", "D": "Quality"}
 UNIVERSE_RULES = (2, 3, 4)
 TRIGGER_RULES = (5, 6, 7, 8, 9)
@@ -126,7 +220,7 @@ def compute(panel: dict, bands: pd.Series | None = None, p: dict | None = None) 
     sma65 = C.rolling(p["sma_window"]).mean()
 
     m = {"change": change, "close_range": cr, "vol_ratio": V / vavg50, "range_ratio": rng / atr20,
-         "traded_value": tv20, "sma65": sma65, "atr20": atr20}
+         "traded_value": tv20, "sma": sma65, "atr20": atr20}
 
     # ---- base (rule 11): the longest run of 3..20 days before today with depth <= 15%
     base_len = pd.DataFrame(np.nan, index=C.index, columns=C.columns)
@@ -218,20 +312,20 @@ def scan_day(res: dict, day) -> tuple[pd.DataFrame, pd.DataFrame]:
             "Score": res["score"].loc[day, idx].round(1).values,
             "Close": C.values, "Change %": (m["change"].loc[day, idx] * 100).values,
             "Close range %": (m["close_range"].loc[day, idx] * 100).values,
-            "Volume x 50d avg": m["vol_ratio"].loc[day, idx].values,
-            "Range x ATR20": m["range_ratio"].loc[day, idx].values,
-            "Base days": m["base_len"].loc[day, idx].values,
+            "Volume x avg": m["vol_ratio"].loc[day, idx].values,
+            "Range x ATR": m["range_ratio"].loc[day, idx].values,
+            "Base length": m["base_len"].loc[day, idx].values,
             "Base depth %": (m["base_depth"].loc[day, idx] * 100).values,
             "Base high": m["base_high"].loc[day, idx].values,
-            "Stop (day low)": L.values,
+            "Stop (low)": L.values,
             "Risk %": ((C - L) / C * 100).values,
-            "Above SMA65 %": ((C / m["sma65"].loc[day, idx] - 1) * 100).values,
-            "Earlier bursts (30d)": m["prior_triggers"].loc[day, idx].values,
-            "Erratic days (20d)": m["erratic_days"].loc[day, idx].values,
+            "Above SMA %": ((C / m["sma"].loc[day, idx] - 1) * 100).values,
+            "Earlier bursts": m["prior_triggers"].loc[day, idx].values,
+            "Erratic bars": m["erratic_days"].loc[day, idx].values,
             "Traded value Rs cr": (m["traded_value"].loc[day, idx] / 1e7).values,
             "Smooth R2": m["r2"].loc[day, idx].values,
             "Body share": m["body_share"].loc[day, idx].values,
-            "Gaps (20d)": m["gaps"].loc[day, idx].values,
+            "Gaps": m["gaps"].loc[day, idx].values,
             "ATR %": (m["atr_pct"].loc[day, idx] * 100).values,
         })
         if res["bands"] is not None:
@@ -247,10 +341,11 @@ def scan_day(res: dict, day) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     passed = rows(passed_all)
     if len(passed):
-        passed = passed.sort_values(["Score", "Close range %", "Volume x 50d avg"], ascending=False)
+        passed = passed.sort_values(["Score", "Close range %", "Volume x avg"], ascending=False)
     near = rows(near_mask)
     if len(near):
-        fmt = {"min_price": p["min_price"], "tv_cr": p["min_traded_value"] / 1e7, "chg": p["min_change"] * 100}
+        fmt = {"min_price": p["min_price"], "tv_cr": p["min_traded_value"] / 1e7, "chg": p["min_change"] * 100,
+               "sma": p["sma_window"], "unit": p["unit"]}
         reasons = []
         for s in near["Symbol"]:
             failed = [k for k in (4,) + SETUP_RULES + QUALITY_RULES if not ok[k][s]]
@@ -279,7 +374,7 @@ def scan_range(res: dict, start, end, near_misses: bool = True) -> tuple[pd.Data
     """Every day's scan from `start` to `end` (both included), one row per stock per breakout day, newest first.
 
     Adds what happened after each breakout, up to the latest candle in the data:
-      Days since       trading days from the breakout day to the latest candle
+      Bars since       bars from the breakout bar to the latest one
       Latest close     the latest close
       Change since %   latest close / breakout-day close - 1
       High since %     highest high after the breakout day / breakout-day close - 1
@@ -299,14 +394,14 @@ def scan_range(res: dict, start, end, near_misses: bool = True) -> tuple[pd.Data
             after = idx[idx > d]
             syms = df["Symbol"].values
             c0 = px["Close"].loc[d, syms].values
-            df["Days since"] = len(after)
+            df["Bars since"] = len(after)
             df["Latest close"] = px["Close"].loc[last, syms].values
             df["Change since %"] = (df["Latest close"].values / c0 - 1) * 100
             if len(after):
                 hi = px["High"].loc[after, syms].max().values
                 lo = px["Low"].loc[after, syms].min().values
                 df["High since %"] = (hi / c0 - 1) * 100
-                df["Stop hit"] = lo <= df["Stop (day low)"].values
+                df["Stop hit"] = lo <= df["Stop (low)"].values
             else:
                 df["High since %"] = np.nan
                 df["Stop hit"] = False
@@ -345,28 +440,28 @@ def rule_checks(res: dict, day, sym: str) -> list[dict]:
         band = "no band (F&O)" if b == np.inf else ("not listed" if pd.isna(b) else f"{b:g}%")
     tv = g(m["traded_value"])
     base_len, base_depth, base_high = g(m["base_len"]), g(m["base_depth"]), g(m["base_high"])
-    sma = g(m["sma65"])
+    sma = g(m["sma"])
     vals = {
         1: "member",
         2: f(C, "close ₹{:,.2f}"),
-        3: f(None if tv is None else tv / 1e7, "₹{:,.1f} crore a day"),
+        3: f(None if tv is None else tv / 1e7, "₹{:,.1f} crore a bar"),
         4: band or "not checked",
         5: f(None if g(m["change"]) is None else g(m["change"]) * 100, "{:+.1f}%"),
         6: f(g(m["vol_ratio"]), "{:.1f} x average"),
         7: f(None if g(m["close_range"]) is None else g(m["close_range"]) * 100, "closed at {:.0f}% of range"),
         8: "green" if (C is not None and O is not None and C > O) else "red",
-        9: f(g(m["range_ratio"]), "{:.1f} x ATR20"),
-        10: f(g(m["yday_range_ratio"]), "range {:.2f} x ATR20"),
-        11: "none" if base_len is None else f"{base_len:.0f} days, {base_depth * 100:.1f}% deep",
+        9: f(g(m["range_ratio"]), "{:.1f} x ATR" + str(p["atr_window"])),
+        10: f(g(m["yday_range_ratio"]), "range {:.2f} x ATR" + str(p["atr_window"])),
+        11: "none" if base_len is None else f"{base_len:.0f} bars, {base_depth * 100:.1f}% deep",
         12: "no base" if base_high is None or C is None else f"close {(C / base_high - 1) * 100:+.1f}% vs base high",
-        13: f(g(m["contraction"]), "{:.2f} x ATR50"),
-        14: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA65",
+        13: f(g(m["contraction"]), "{:.2f} x ATR" + str(p["atr_long_window"])),
+        14: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA{p['sma_window']}",
         15: f(g(m["prior_triggers"]), "{:.0f} earlier"),
-        16: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA65",
-        17: f(g(m["erratic_days"]), "{:.0f} days"),
+        16: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA{p['sma_window']}",
+        17: f(g(m["erratic_days"]), "{:.0f} bars"),
     }
     out = []
-    for n, layer, name, rule in RULE_SHEET:
+    for n, layer, name, rule in rule_sheet(p):
         ok = True if n == 1 else (True if (n == 4 and res["bands"] is None) else bool(r[n].at[day, sym]))
         out.append({"n": n, "layer": layer, "name": name, "pass": ok, "value": vals[n]})
     return out

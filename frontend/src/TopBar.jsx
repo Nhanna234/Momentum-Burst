@@ -1,7 +1,7 @@
 import React from "react";
-import { fmtWeekday } from "./util.js";
+import { fmtBar } from "./util.js";
 
-const PRESETS = [5, 10, 20, 60];
+export const PRESETS = { D: [5, 10, 20, 60], W: [4, 8, 13, 26], M: [3, 6, 12, 24] };
 
 function Segmented({ label, value, options, onChange }) {
   return (
@@ -16,31 +16,31 @@ function Segmented({ label, value, options, onChange }) {
   );
 }
 
-function DayPicker({ dates, day, onDay }) {
+function DayPicker({ dates, day, onDay, tf, unit }) {
   const i = Math.max(0, dates.indexOf(day));
   const recent = dates.slice(-120).reverse();
   return (
     <div className="daypick">
-      <button className="icon" aria-label="Previous trading day" disabled={i <= 0}
+      <button className="icon" aria-label={`Previous ${unit}`} disabled={i <= 0}
               onClick={() => onDay(dates[i - 1])}>‹</button>
-      <select aria-label="Scan day" value={day} onChange={(e) => onDay(e.target.value)}>
-        {recent.map((d) => <option key={d} value={d}>{fmtWeekday(d)}</option>)}
+      <select aria-label={`Scan ${unit}`} value={day} onChange={(e) => onDay(e.target.value)}>
+        {recent.map((d) => <option key={d} value={d}>{fmtBar(d, tf)}</option>)}
       </select>
-      <button className="icon" aria-label="Next trading day" disabled={i >= dates.length - 1}
+      <button className="icon" aria-label={`Next ${unit}`} disabled={i >= dates.length - 1}
               onClick={() => onDay(dates[i + 1])}>›</button>
     </div>
   );
 }
 
-function PeriodPicker({ dates, req, onChange }) {
+function PeriodPicker({ dates, req, onChange, tf, units }) {
   const custom = req.preset === "custom";
   return (
     <div className="periodpick">
       <div className="chips" role="radiogroup" aria-label="Period">
-        {PRESETS.map((n) => (
+        {PRESETS[tf].map((n) => (
           <button key={n} role="radio" aria-checked={req.preset === n} className={req.preset === n ? "on" : ""}
                   onClick={() => onChange({ ...req, preset: n })}>
-            {n} days
+            {n} {units}
           </button>
         ))}
         <button role="radio" aria-checked={custom} className={custom ? "on" : ""}
@@ -81,14 +81,19 @@ export default function TopBar({ meta, req, onChange, busy, theme, onTheme, tab,
 
       {tab === "scan" && (
         <div className="controls">
+          <Segmented label="Timeframe" value={req.tf}
+                     options={meta.tfs}
+                     onChange={(v) => onChange({ ...req, tf: v, day: null, preset: PRESETS[v][1],
+                                                 start: null, end: null })} />
           <Segmented label="Universe" value={req.index}
                      options={meta.indexes.map((x) => [x, x.replace("Nifty ", "")])}
                      onChange={(v) => onChange({ ...req, index: v })} />
-          <Segmented label="View" value={req.mode} options={[["day", "One day"], ["period", "Period"]]}
+          <Segmented label="View" value={req.mode} options={[["day", `One ${meta.unit}`], ["period", "Period"]]}
                      onChange={(v) => onChange({ ...req, mode: v, day: v === "day" ? dates[dates.length - 1] : req.day })} />
           {req.mode === "day"
-            ? <DayPicker dates={dates} day={req.day} onDay={(d) => onChange({ ...req, day: d })} />
-            : <PeriodPicker dates={dates} req={req} onChange={onChange} />}
+            ? <DayPicker dates={dates} day={req.day} tf={meta.tf} unit={meta.unit}
+                         onDay={(d) => onChange({ ...req, day: d })} />
+            : <PeriodPicker dates={dates} req={req} onChange={onChange} tf={meta.tf} units={meta.units} />}
         </div>
       )}
 

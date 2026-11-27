@@ -1,14 +1,14 @@
 import React from "react";
 import PriceChart from "./PriceChart.jsx";
-import { fmtDate, inr, num, pct, tone } from "./util.js";
+import { cap, fmtBar, inr, num, pct, tone } from "./util.js";
 
-const PART_NAMES = {
-  smooth: ["Smooth trend", "how straight the last 65 closes are"],
+const partNames = (p) => ({
+  smooth: ["Smooth trend", `how straight the last ${p.r2_window} closes are`],
   tight: ["Tight base", "shallower base scores more"],
-  body: ["Small wicks", "candle bodies vs. their range, 20 days"],
-  gaps: ["Few gaps", "opening gaps of 3%+ in 20 days"],
-  calm: ["Calm volatility", "daily range as % of price"],
-};
+  body: ["Small wicks", `candle bodies vs. their range, ${p.body_window} ${p.units}`],
+  gaps: ["Few gaps", `opening gaps of ${Math.round(p.gap_size * 100)}%+ in ${p.gap_window} ${p.units}`],
+  calm: ["Calm volatility", `average ${p.unit}'s range as % of price`],
+});
 
 function Figure({ label, value, sub, toneClass = "" }) {
   return (
@@ -44,6 +44,7 @@ function Checklist({ checks, meta }) {
 }
 
 function ScoreParts({ row, meta }) {
+  const PART_NAMES = partNames(meta.params);
   return (
     <div className="parts">
       <div className="total">
@@ -82,7 +83,9 @@ export default function Detail({ row, chart, meta, theme, period }) {
         <div>
           <h2>{row.symbol}<span className={`kind ${row.kind}`}>{row.kind === "passed" ? "Passed" : "Near miss"}</span></h2>
           <p className="dsub">
-            {row.company}{row.industry ? `, ${row.industry}` : ""}. Breakout on {fmtDate(row.date)}.
+            {row.company}{row.industry ? `, ${row.industry}` : ""}. Breakout{" "}
+            {meta.unit === "day" ? `on ${fmtBar(row.date, "D")}` : meta.unit === "week"
+              ? `in the week to ${fmtBar(row.date, "W").replace("Week to ", "")}` : `in ${fmtBar(row.date, "M")}`}.
           </p>
         </div>
         <a className="ghost link" href={row.tvLink} target="_blank" rel="noreferrer">Open in TradingView</a>
@@ -98,22 +101,26 @@ export default function Detail({ row, chart, meta, theme, period }) {
 
       <dl className="figs">
         <Figure label="Close" value={inr(row.close)} />
-        <Figure label="Day's change" value={pct(row.change)} toneClass={tone(row.change)} />
-        <Figure label="Stop (day's low)" value={inr(row.stop)} sub={riskRs != null ? `${inr(riskRs)} a share` : null} />
+        <Figure label={`${cap(meta.unit)}'s change`} value={pct(row.change)} toneClass={tone(row.change)} />
+        <Figure label={`Stop (${meta.unit}'s low)`} value={inr(row.stop)}
+                sub={riskRs != null ? `${inr(riskRs)} a share` : null} />
         <Figure label="Risk to stop" value={pct(row.risk, 1, false)} />
-        <Figure label="Volume" value={`${num(row.volRatio, 1)}×`} sub="50-day average" />
-        <Figure label="Base" value={row.baseDays ? `${row.baseDays} days` : "–"}
+        <Figure label="Volume" value={`${num(row.volRatio, 1)}×`}
+                sub={`${meta.params.vol_avg_window}-${meta.unit} average`} />
+        <Figure label="Base" value={row.baseDays ? `${row.baseDays} ${meta.units}` : "–"}
                 sub={row.baseDepth != null ? `${num(row.baseDepth, 1)}% deep` : null} />
         {period && row.daysSince > 0 && (
-          <Figure label={`Since, ${row.daysSince} sessions`} value={pct(row.changeSince)}
+          <Figure label={`Since, ${row.daysSince} ${row.daysSince === 1 ? meta.unit : meta.units}`}
+                  value={pct(row.changeSince)}
                   toneClass={tone(row.changeSince)} sub={`high ${pct(row.highSince)}`} />
         )}
       </dl>
 
       <PriceChart chart={chart} theme={theme} />
       <p className="chart-note">
-        Daily candles. Orange line: the base high. Red dotted line: the stop. Grey dashed line: 65-day SMA.
-        {period ? " Up to 30 sessions after the breakout are shown." : ""}
+        {cap(meta.unit === "day" ? "daily" : `${meta.unit}ly`)} candles. Orange line: the base high. Red dotted line: the
+        stop. Grey dashed line: {meta.params.sma_window}-{meta.unit} SMA.
+        {period ? ` Up to 30 ${meta.units} after the breakout are shown.` : ""}
       </p>
 
       <div className="why">
@@ -122,7 +129,7 @@ export default function Detail({ row, chart, meta, theme, period }) {
       </div>
       {period && row.daysSince > 0 && (
         <p className="caveat">
-          "Since" figures run from the breakout day's close to the latest close. They are not trade results: no exit
+          "Since" figures run from the breakout {meta.unit}'s close to the latest close. They are not trade results: no exit
           rule or costs are applied, and older breakouts have had longer to move.
         </p>
       )}

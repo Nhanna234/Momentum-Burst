@@ -23,7 +23,8 @@ export default function PriceChart({ chart, theme }) {
       rightPriceScale: { borderColor: c.border, scaleMargins: { top: 0.06, bottom: 0.26 } },
       timeScale: { borderColor: c.border, rightOffset: 3, barSpacing: 6 },
       crosshair: { mode: CrosshairMode.Normal },
-      localization: { priceFormatter: (p) => "₹" + p.toLocaleString("en-IN", { maximumFractionDigits: 2 }) },
+      // no labels below zero: the space under the candles holds the volume bars
+      localization: { priceFormatter: (p) => (p < 0 ? "" : "₹" + p.toLocaleString("en-IN", { maximumFractionDigits: 2 })) },
     });
     const candles = api.addCandlestickSeries({
       upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down, borderVisible: false,

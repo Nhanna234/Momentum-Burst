@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { fmtDay, pct, tone } from "./util.js";
+import { fmtBar, pct, tone } from "./util.js";
 
 // One cell per rule (1-17), coloured by its layer when passed, hollow when failed.
 export function RuleStrip({ rules, meta, size = "sm" }) {
@@ -18,7 +18,7 @@ export function RuleStrip({ rules, meta, size = "sm" }) {
 
 const SORTS = {
   score: ["Clean-chart score", (a, b) => b.score - a.score],
-  change: ["Day's change", (a, b) => b.change - a.change],
+  change: ["Breakout bar's change", (a, b) => b.change - a.change],
   risk: ["Lowest risk to stop", (a, b) => a.risk - b.risk],
   date: ["Newest first", (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.score - a.score)],
   since: ["Change since breakout", (a, b) => (b.changeSince ?? -1e9) - (a.changeSince ?? -1e9)],
@@ -75,7 +75,7 @@ export default function CandidateList({ rows, list, onList, selectedId, onSelect
             : list === "passed"
               ? (rows.near.length ? "No stock passed every rule. Open Near misses to see what came closest."
                                   : "No breakout moves in this scan.")
-              : "No near misses: no other stock made a 4% move on volume."}
+              : `No near misses: no other stock made a ${Math.round(meta.params.min_change * 100)}% move on volume.`}
         </div>
       ) : (
         <ul className="rows" role="listbox" tabIndex={0} onKeyDown={onKey} aria-label="Stocks">
@@ -93,7 +93,7 @@ export default function CandidateList({ rows, list, onList, selectedId, onSelect
               <div className="risk" title="Distance from the close to the stop">{pct(r.risk, 1, false)}</div>
               <div className="meta-line">
                 <RuleStrip rules={r.rules} meta={meta} />
-                {period && <span className="when">{fmtDay(r.date)}</span>}
+                {period && <span className="when">{fmtBar(r.date, meta.tf, true)}</span>}
                 {period && r.daysSince > 0 && (
                   <span className={`since ${tone(r.changeSince)}`}>{pct(r.changeSince)} since</span>
                 )}
@@ -106,7 +106,7 @@ export default function CandidateList({ rows, list, onList, selectedId, onSelect
         </ul>
       )}
       <p className="list-foot">
-        Columns: score, day's change, risk to the stop. The strip shows rules 1–17: filled = passed.
+        Columns: score, the {meta.unit}'s change, risk to the stop. The strip shows rules 1–17: filled = passed.
       </p>
     </section>
   );

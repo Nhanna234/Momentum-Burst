@@ -8,6 +8,17 @@ const asDate = (s) => new Date(`${s}T00:00:00`);
 export const fmtDate = (s) => (s ? DATE_FMT.format(asDate(s)) : "–");
 export const fmtDay = (s) => (s ? DATE_SHORT.format(asDate(s)) : "–");
 export const fmtWeekday = (s) => (s ? WEEKDAY.format(asDate(s)) : "–");
+const MONTH = new Intl.DateTimeFormat("en-IN", { month: "short", year: "numeric" });
+
+// How one bar is named: the day, the week (by its last trading day) or the month.
+export function fmtBar(s, tf, short = false) {
+  if (!s) return "–";
+  if (tf === "M") return MONTH.format(asDate(s));
+  if (tf === "W") return `${short ? "wk to" : "Week to"} ${(short ? DATE_SHORT : DATE_FMT).format(asDate(s))}`;
+  return short ? DATE_SHORT.format(asDate(s)) : WEEKDAY.format(asDate(s));
+}
+
+export const cap = (w) => (w ? w[0].toUpperCase() + w.slice(1) : w);
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
 

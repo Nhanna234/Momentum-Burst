@@ -2,9 +2,9 @@
 Momentum burst scanner: the web app.
 
 Run on your PC:   streamlit run app.py
-The screen is a React app (frontend/, built into frontend/dist). This file loads the data, runs the rules
-(burst_rules.py), packs the results (payload.py) and hands them to the React app. The command-line version
-(python scan_burst.py) gives the same results.
+The screen is a React app (frontend/, built into frontend/dist). This file loads the data, builds daily, weekly
+or monthly candles, runs the rules (burst_rules.py), packs the results (payload.py) and hands them to the React
+app. The command-line version (python scan_burst.py --timeframe D/W/M) gives the same results.
 """
 
 import os
@@ -59,40 +59,46 @@ def get_bands():
     return bd.load_bands()
 
 
-def get_data(index: str, symbols: list[str], fresh: bool, slot) -> dict:
-    """Candles and rule results for an index, downloaded at most every 15 minutes unless `fresh`."""
+def get_data(index: str, tf: str, symbols: list[str], fresh: bool, slot) -> dict:
+    """Candles for an index (downloaded at most every 15 minutes unless `fresh`) and the rule results for one
+    timeframe. Only the latest index is kept, to keep memory use modest on Streamlit Cloud."""
     store = shared()
     hit = store.get(index)
     now = datetime.now(bd.IST)
-    if hit and not fresh and now - hit["at"] < timedelta(minutes=bd.CACHE_MINUTES):
-        return hit
-    pkl = os.path.join(CACHE_DIR, f"candles_{index.replace(' ', '_')}.pkl")
-    if fresh and os.path.exists(pkl):
-        os.remove(pkl)
-    slot.markdown(f'<div class="mb-loading">Downloading daily prices for {len(symbols)} stocks…</div>',
-                  unsafe_allow_html=True)
-    bar = slot.progress(0.0)
+    if not hit or fresh or now - hit["at"] >= timedelta(minutes=bd.CACHE_MINUTES):
+        pkl = os.path.join(CACHE_DIR, f"candles_{index.replace(' ', '_')}.pkl")
+        if fresh and os.path.exists(pkl):
+            os.remove(pkl)
+        slot.markdown(f'<div class="mb-loading">Downloading about five years of daily prices for {len(symbols)} '
+                      f'stocks. The first load takes a few minutes.</div>', unsafe_allow_html=True)
+        bar = slot.progress(0.0)
 
-    def progress(msg):
-        try:
-            done, total = [int(x) for x in msg.split()[1::2][:2]]
-            bar.progress(min(1.0, done / total), text=msg)
-        except Exception:  # noqa: BLE001  (other messages)
-            pass
+        def progress(msg):
+            try:
+                done, total = [int(x) for x in msg.split()[1::2][:2]]
+                bar.progress(min(1.0, done / total), text=msg)
+            except Exception:  # noqa: BLE001  (other messages)
+                pass
 
-    panel, missing = bd.load_candles(symbols, CACHE_DIR, index, progress)
-    bar.progress(1.0, text="Applying the rules…")
-    bands, _ = get_bands()
-    res = br.compute(panel, bands)
+        panel, missing = bd.load_candles(symbols, CACHE_DIR, index, progress)
+        store.clear()
+        hit = store[index] = {"at": now, "panel": panel, "missing": missing, "res": {}}
+    if tf not in hit["res"]:
+        slot.markdown('<div class="mb-loading">Applying the rules…</div>', unsafe_allow_html=True)
+        panel = hit["panel"]
+        if tf == "D":
+            panel = {f: x.iloc[-bd.DAILY_BARS:] for f, x in panel.items()}
+        bands, _ = get_bands()
+        hit["res"][tf] = br.compute(br.to_timeframe(panel, tf), bands, br.TIMEFRAMES[tf][1])
     slot.empty()
-    store[index] = {"at": now, "res": res, "missing": missing}
-    return store[index]
+    return {"at": hit["at"], "res": hit["res"][tf], "missing": hit["missing"]}
 
 
 # ════════════════════════════════════════════════════════════ what the screen asked for
 req = st.session_state.get("mb") or {}
 index = req.get("index") if req.get("index") in INDEXES else INDEXES[0]
 mode = "period" if req.get("mode") == "period" else "day"
+tf = req.get("tf") if req.get("tf") in br.TIMEFRAMES else "D"
 fresh = bool(req.get("refresh")) and req.get("refresh") != st.session_state.get("last_refresh")
 if fresh:
     st.session_state["last_refresh"] = req.get("refresh")
@@ -101,7 +107,7 @@ slot = st.empty()
 try:
     uni, uni_note = get_index(index)
     bands, band_note = get_bands()
-    data = get_data(index, uni["Symbol"].tolist(), fresh, slot)
+    data = get_data(index, tf, uni["Symbol"].tolist(), fresh, slot)
 except Exception as e:  # noqa: BLE001
     slot.empty()
     st.error(f"Could not load the data: {e}")
@@ -144,10 +150,14 @@ for df in (passed, near):
         df["Chart"] = df["Symbol"].map(scan_burst.tv_link)
 
 warnings = []
+partial_last = not br.bar_is_complete(dates[-1], tf, datetime.now(bd.IST).replace(tzinfo=None))
 if end == dates[-1]:
-    f = bd.freshness_note(dates[-1])
+    f = bd.freshness_note(dates[-1]) if tf == "D" else None
     if f:
         warnings.append(f)
+    if partial_last:
+        warnings.append(f"This {res['p']['unit']} is not over yet: its candle runs to {dates[-1]:%d %b %Y} and will "
+                        f"change until the {res['p']['unit']} ends, so its list is provisional.")
 if bands is None:
     warnings.append("The price band rule (rule 4) was not applied: " + band_note)
 if data["missing"]:
@@ -160,10 +170,11 @@ result = pl.build(res, mode, start, end, passed, near, extra)
 fun = (pd.DataFrame([(r["step"], r["left"]) for r in result["funnel"]], columns=["Step", "Stocks left"])
        if mode == "day" else pd.DataFrame(result["perDay"]))
 xlsx = scan_burst.write_excel(os.path.join(tempfile.gettempdir(), "momentum_burst_out"), index, end, passed, near,
-                              fun, warnings, uni_note, band_note, period=(start, end) if mode == "period" else None)
+                              fun, warnings, uni_note, band_note, period=(start, end) if mode == "period" else None,
+                              tf=tf)
 
 dashboard(
-    meta=pl.meta(res, index, INDEXES, len(uni), uni_note, band_note, data["at"], warnings),
+    meta=pl.meta(res, index, INDEXES, len(uni), uni_note, band_note, data["at"], warnings, tf, partial_last),
     result=result,
     excel={"name": os.path.basename(xlsx), "data": pl.excel_b64(xlsx)},
     key="mb",

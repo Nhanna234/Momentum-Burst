@@ -113,63 +113,69 @@ def part1():
     passed, near = br.scan_day(res, day)
     assert set(passed["Symbol"]) == {"GOOD", "FNO"}, passed["Symbol"].tolist()
     g = passed.set_index("Symbol").loc["GOOD"]
-    assert abs(g["Change %"] - 6.0) < 1e-9 and abs(g["Stop (day low)"] - res["prices"]["Low"].at[day, "GOOD"]) < 1e-9
-    assert g["Base days"] >= 10 and 0 < g["Score"] <= 100
+    assert abs(g["Change %"] - 6.0) < 1e-9 and abs(g["Stop (low)"] - res["prices"]["Low"].at[day, "GOOD"]) < 1e-9
+    assert g["Base length"] >= 10 and 0 < g["Score"] <= 100
     assert "R4 Price band 5% or less" in near.set_index("Symbol").loc["BAND5", "Failed rules"]
     print("part 1: textbook passes; each variant fails its rule:",
           {k: failed[f'R{k}'] for k in variants})
-    print("textbook score", g["Score"], "base", g["Base days"], "days, depth", round(g["Base depth %"], 2), "%")
+    print("textbook score", g["Score"], "base", g["Base length"], "days, depth", round(g["Base depth %"], 2), "%")
     return res
 
 
 # ═══════════════════════════════════════════════════════════ part 2: slow version of every rule
-def slow(d, i, band):
-    """Every rule and measure for one stock on day i, from plain arrays."""
+def slow(d, i, band, p=None):
+    """Every rule and measure for one stock on bar i, from plain arrays, using the numbers in p."""
+    p = p or br.PARAMS
     O, H, L, C, V = (np.asarray(d[f], float) for f in ("Open", "High", "Low", "Close", "Volume"))
     R = H - L
     out = {}
-    if i < 120:
-        return None
-    atr20, atr50 = R[i - 20:i].mean(), R[i - 50:i].mean()
-    vavg, tv = V[i - 50:i].mean(), (C[i - 20:i] * V[i - 20:i]).mean()
-    sma = C[i - 64:i + 1].mean()
+    aw, lw, vw = p["atr_window"], p["atr_long_window"], p["vol_avg_window"]
+    atr20, atr50 = R[i - aw:i].mean(), R[i - lw:i].mean()
+    vavg, tv = V[i - vw:i].mean(), (C[i - p["liq_window"]:i] * V[i - p["liq_window"]:i]).mean()
+    sma = C[i - p["sma_window"] + 1:i + 1].mean()
 
     def trig(j):
-        a20 = R[j - 20:j].mean()
+        a20 = R[j - aw:j].mean()
         cr = (C[j] - L[j]) / R[j] if R[j] > 0 else 0.0
-        return (C[j] / C[j - 1] - 1 >= 0.04 and V[j] > V[j - 1] and V[j] >= 1.5 * V[j - 50:j].mean()
-                and cr >= 0.70 and C[j] > O[j] and R[j] >= 1.5 * a20)
+        return (C[j] / C[j - 1] - 1 >= p["min_change"] and V[j] > V[j - 1] and V[j] >= p["vol_mult"] * V[j - vw:j].mean()
+                and cr >= p["min_close_range"] and C[j] > O[j] and R[j] >= p["range_mult"] * a20)
 
     best = None
-    for n in range(3, 21):
+    for n in range(p["base_min"], p["base_max"] + 1):
         hh, ll = H[i - n:i].max(), L[i - n:i].min()
-        if hh / ll - 1 <= 0.15:
+        if hh / ll - 1 <= p["base_max_depth"]:
             best = (n, hh, hh / ll - 1)
     cr = (C[i] - L[i]) / R[i] if R[i] > 0 else 0.0
-    out[2] = C[i] >= 50
-    out[3] = tv >= 1e7
-    out[4] = band > 5
-    out[5] = C[i] / C[i - 1] - 1 >= 0.04
-    out[6] = V[i] > V[i - 1] and V[i] >= 1.5 * vavg
-    out[7] = cr >= 0.70
+    out[2] = C[i] >= p["min_price"]
+    out[3] = tv >= p["min_traded_value"]
+    out[4] = band > p["max_excluded_band"]
+    out[5] = C[i] / C[i - 1] - 1 >= p["min_change"]
+    out[6] = V[i] > V[i - 1] and V[i] >= p["vol_mult"] * vavg
+    out[7] = cr >= p["min_close_range"]
     out[8] = C[i] > O[i]
-    out[9] = R[i] >= 1.5 * atr20
-    out[10] = R[i - 1] < 0.8 * atr20 or C[i - 1] < C[i - 2]
+    out[9] = R[i] >= p["range_mult"] * atr20
+    out[10] = R[i - 1] < p["quiet_range_mult"] * atr20 or C[i - 1] < C[i - 2]
     out[11] = best is not None
     out[12] = best is not None and C[i] > best[1]
-    out[13] = R[i - 5:i].mean() <= 0.8 * atr50
+    out[13] = R[i - p["contraction_days"]:i].mean() <= p["contraction_mult"] * atr50
     out[14] = C[i] > sma
-    out[15] = sum(trig(j) for j in range(i - 30, i)) <= 1
-    out[16] = C[i] <= sma * 1.25
-    out[17] = sum(abs(C[j] / C[j - 1] - 1) >= 0.05 for j in range(i - 20, i)) <= 3
-    y = np.log(C[i - 65:i])
-    rr = np.corrcoef(np.arange(65), y)[0, 1]
+    out[15] = sum(trig(j) for j in range(i - p["prior_trigger_window"], i)) <= p["max_prior_triggers"]
+    out[16] = C[i] <= sma * (1 + p["max_extension"])
+    out[17] = sum(abs(C[j] / C[j - 1] - 1) >= p["erratic_move"]
+                  for j in range(i - p["erratic_window"], i)) <= p["max_erratic_days"]
+    k = p["r2_window"]
+    y = np.log(C[i - k:i])
+    rr = np.corrcoef(np.arange(k), y)[0, 1]
     smooth = rr ** 2 if rr > 0 else 0.0
-    body = np.mean(np.abs(C[i - 20:i] - O[i - 20:i]) / R[i - 20:i])
-    gaps = sum(abs(O[j] / C[j - 1] - 1) >= 0.03 for j in range(i - 20, i))
-    tight = 0.0 if best is None else min(1, max(0, (0.15 - best[2]) / 0.12))
-    calm = min(1, max(0, (0.08 - atr20 / C[i - 1]) / 0.06))
-    score = 30 * smooth + 20 * tight + 20 * body + 15 * max(0, 1 - gaps / 4) + 15 * calm
+    bw = p["body_window"]
+    body = np.mean(np.abs(C[i - bw:i] - O[i - bw:i]) / R[i - bw:i])
+    gaps = sum(abs(O[j] / C[j - 1] - 1) >= p["gap_size"] for j in range(i - p["gap_window"], i))
+    span = p["base_max_depth"] - p["base_depth_full"]
+    tight = 0.0 if best is None else min(1, max(0, (p["base_max_depth"] - best[2]) / span))
+    calm = min(1, max(0, (p["atr_pct_zero"] - atr20 / C[i - 1]) / (p["atr_pct_zero"] - p["atr_pct_full"])))
+    w = p["weights"]
+    score = (w["smooth"] * smooth + w["tight"] * tight + w["body"] * body
+             + w["gaps"] * max(0, 1 - gaps / p["gaps_for_zero"]) + w["calm"] * calm)
     out["score"] = score
     out["base_len"] = np.nan if best is None else best[0]
     return out
@@ -240,7 +246,7 @@ def part3():
         d, sym = row["Date"], row["Symbol"]
         after = DAYS[DAYS > d]
         c0 = px["Close"].at[d, sym]
-        assert row["Days since"] == len(after)
+        assert row["Bars since"] == len(after)
         assert abs(row["Change since %"] - (px["Close"].at[DAYS[-1], sym] / c0 - 1) * 100) < 1e-9
         if len(after):
             assert abs(row["High since %"] - (px["High"].loc[after, sym].max() / c0 - 1) * 100) < 1e-9
@@ -266,9 +272,65 @@ def part4():
     print(f"part 4: rule checks agree; payload with {len(out['charts'])} charts is valid JSON")
 
 
+def part5():
+    """Weekly and monthly: candles built correctly from daily ones, and every rule equal to the slow version."""
+    days = pd.bdate_range("2020-01-01", periods=1500)
+    rng = np.random.default_rng(7)
+    stocks = {}
+    for k in range(12):
+        n = len(days)
+        r = rng.normal(0.0008, 0.022, n)
+        r[rng.choice(n, 40, replace=False)] = rng.uniform(0.04, 0.10, 40)
+        c = 200 * np.exp(np.cumsum(r))
+        o = np.roll(c, 1) * np.exp(rng.normal(0, 0.006, n))
+        o[0] = c[0]
+        h = np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.01, n)))
+        l = np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.01, n)))
+        v = rng.lognormal(12, 0.5, n)
+        stocks[f"T{k}"] = {"Open": o, "High": h, "Low": l, "Close": c, "Volume": v}
+    daily = {f: pd.DataFrame({s: d[f] for s, d in stocks.items()}, index=days) for f in
+             ("Open", "High", "Low", "Close", "Volume")}
+    daily["Close"].iloc[100:103, 0] = np.nan                       # a few missing days must not break bars
+    for tf in ("W", "M"):
+        p = br.TIMEFRAMES[tf][1]
+        bars = br.to_timeframe(daily, tf)
+        # candles: check two bars by hand
+        key = daily["Close"].index.to_period("W-FRI" if tf == "W" else "M")
+        for j in (5, len(bars["Close"]) - 1):
+            per = bars["Close"].index[j].to_period("W-FRI" if tf == "W" else "M")
+            rows = key == per
+            assert bars["Close"].index[j] == daily["Close"].index[rows].max()
+            assert np.isclose(bars["High"].iloc[j, 1], daily["High"].loc[rows].iloc[:, 1].max())
+            assert np.isclose(bars["Low"].iloc[j, 1], daily["Low"].loc[rows].iloc[:, 1].min())
+            assert np.isclose(bars["Open"].iloc[j, 1], daily["Open"].loc[rows].iloc[0, 1])
+            assert np.isclose(bars["Close"].iloc[j, 1], daily["Close"].loc[rows].iloc[-1, 1])
+            assert np.isclose(bars["Volume"].iloc[j, 1], daily["Volume"].loc[rows].iloc[:, 1].sum())
+        res = br.compute(bars, pd.Series({s: 20.0 for s in stocks}), p)
+        first = res["score"].index.get_loc(br.first_usable_day(res))
+        mism = checks = 0
+        hits = {k: 0 for k in br.ALL_RULES}
+        for s in stocks:
+            arr = {f: bars[f][s].values for f in bars}
+            if np.isnan(arr["Close"]).any():
+                continue
+            for i in range(first, len(bars["Close"])):
+                ref = slow(arr, i, 20.0, p)
+                day = bars["Close"].index[i]
+                for k in br.ALL_RULES:
+                    fast = bool(res["r"][k].at[day, s])
+                    checks += 1
+                    hits[k] += fast
+                    mism += fast != bool(ref[k])
+                mism += abs(res["score"].at[day, s] - ref["score"]) > 1e-6
+        assert mism == 0, (tf, mism)
+        print(f"part 5 {tf}: {len(bars['Close'])} bars, {checks} rule checks against the slow version, "
+              f"no differences; rules 5 and 12 passed {hits[5]} and {hits[12]} times")
+
+
 if __name__ == "__main__":
     part1()
     part2()
     part3()
     part4()
+    part5()
     print("ALL CHECKS PASSED")

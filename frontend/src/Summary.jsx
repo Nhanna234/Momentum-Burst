@@ -1,15 +1,16 @@
 import React from "react";
-import { fmtDay } from "./util.js";
+import { fmtBar } from "./util.js";
 
-const STEP_NAMES = [
-  ["Scanned", "stocks with a candle that day"],
+const stepNames = (meta) => [
+  ["Scanned", `stocks with a candle that ${meta.unit}`],
   ["Liquid", "price, liquidity and price band (rules 2–4)"],
-  ["Moved", "4%+ on volume, closing strong (rules 5–9)"],
+  ["Moved", `${Math.round(meta.params.min_change * 100)}%+ on volume, closing strong (rules 5–9)`],
   ["Set up", "quiet base, breakout, contraction (rules 10–13)"],
   ["Passed", "uptrend, early, not extended, orderly (rules 14–17)"],
 ];
 
-function Funnel({ steps }) {
+function Funnel({ steps, meta }) {
+  const STEP_NAMES = stepNames(meta);
   const top = Math.max(1, steps[0]?.left || 1);
   return (
     <ol className="funnel" aria-label="How many stocks each layer of rules leaves">
@@ -29,7 +30,8 @@ function Funnel({ steps }) {
   );
 }
 
-function PerDay({ days, passed, near }) {
+function PerDay({ days, passed, near, meta }) {
+  const fmt = (d) => fmtBar(d, meta.tf, true);
   const max = Math.max(1, ...days.map((d) => d.passed + d.near));
   const distinct = new Set(passed.map((r) => r.symbol)).size;
   const stops = passed.filter((r) => r.stopHit).length;
@@ -42,9 +44,9 @@ function PerDay({ days, passed, near }) {
         <div><dt>Near misses</dt><dd>{near.length}</dd></div>
       </dl>
       <div className="days" role="img"
-           aria-label={`Breakouts per day over ${days.length} sessions`}>
+           aria-label={`Breakouts per ${meta.unit} over ${days.length} ${meta.units}`}>
         {days.map((d) => (
-          <div key={d.date} className="day" title={`${fmtDay(d.date)}: ${d.passed} passed, ${d.near} near misses`}>
+          <div key={d.date} className="day" title={`${fmt(d.date)}: ${d.passed} passed, ${d.near} near misses`}>
             <div className="stack">
               <span className="n" style={{ height: `${(d.near / max) * 100}%` }} />
               <span className="p" style={{ height: `${(d.passed / max) * 100}%` }} />
@@ -53,20 +55,20 @@ function PerDay({ days, passed, near }) {
         ))}
       </div>
       <div className="days-axis">
-        <span>{fmtDay(days[0]?.date)}</span>
+        <span>{fmt(days[0]?.date)}</span>
         <span className="legend"><i className="p" /> passed <i className="n" /> near miss</span>
-        <span>{fmtDay(days[days.length - 1]?.date)}</span>
+        <span>{fmt(days[days.length - 1]?.date)}</span>
       </div>
     </div>
   );
 }
 
-export default function Summary({ result }) {
+export default function Summary({ result, meta }) {
   return (
     <section className="summary">
       {result.mode === "period"
-        ? <PerDay days={result.perDay} passed={result.passed} near={result.near} />
-        : <Funnel steps={result.funnel} />}
+        ? <PerDay days={result.perDay} passed={result.passed} near={result.near} meta={meta} />
+        : <Funnel steps={result.funnel} meta={meta} />}
     </section>
   );
 }

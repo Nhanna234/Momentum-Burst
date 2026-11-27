@@ -28,7 +28,7 @@ def tv_link(sym: str) -> str:
 
 
 def run(index: str, day: str | None, out_dir: str, progress=print, downloader=None,
-        bands_loader=None, index_loader=None) -> dict:
+        bands_loader=None, index_loader=None, tf: str = "D") -> dict:
     progress(f"Loading the {index} list…")
     uni, uni_note = (index_loader or bd.load_index)(index)
     progress(f"{len(uni)} stocks ({uni_note}). Loading NSE price bands…")
@@ -36,7 +36,10 @@ def run(index: str, day: str | None, out_dir: str, progress=print, downloader=No
     progress(band_note)
     panel, missing = bd.load_candles(uni["Symbol"].tolist(), os.path.join(HERE, "cache"), index, progress,
                                      downloader)
-    res = br.compute(panel, bands)
+    if tf == "D":
+        panel = {f: x.iloc[-bd.DAILY_BARS:] for f, x in panel.items()}
+    panel = br.to_timeframe(panel, tf)
+    res = br.compute(panel, bands, br.TIMEFRAMES[tf][1])
     last = panel["Close"].index.max()
     scan_day = pd.Timestamp(day) if day else last
     if scan_day not in panel["Close"].index:
@@ -52,34 +55,39 @@ def run(index: str, day: str | None, out_dir: str, progress=print, downloader=No
             df.insert(1, "Company", df["Symbol"].map(info["Company Name"]))
             df.insert(2, "Industry", df["Symbol"].map(info["Industry"]))
             df["Chart"] = df["Symbol"].map(tv_link)
-    warn = [w for w in [bd.freshness_note(last) if not day else None,
+    partial = not br.bar_is_complete(scan_day, tf, bd.now_ist().replace(tzinfo=None))
+    warn = [w for w in [bd.freshness_note(last) if not day and tf == "D" else None,
+                        f"The {res['p']['unit']} ending {scan_day:%d %b %Y} is not over yet, so its candle is "
+                        "incomplete and this list is provisional." if partial else None,
                         None if bands is not None else "Rule 4 (price band) was NOT applied: " + band_note,
                         f"No candles from Yahoo for {len(missing)} stocks: {', '.join(missing[:15])}"
                         + (" …" if len(missing) > 15 else "") if missing else None] if w]
     fun = br.funnel(res, scan_day)
-    path = write_excel(out_dir, index, scan_day, passed, near, fun, warn, uni_note, band_note)
+    path = write_excel(out_dir, index, scan_day, passed, near, fun, warn, uni_note, band_note, tf=tf)
     return {"day": scan_day, "passed": passed, "near": near, "funnel": fun, "warnings": warn, "path": path,
             "res": res}
 
 
-def settings_rows(index, day, uni_note, band_note):
-    p = br.PARAMS
-    rows = [("Index", index), ("Scan day", f"{day:%d %b %Y}"), ("Members", uni_note), ("Price bands", band_note),
+def settings_rows(index, day, uni_note, band_note, tf="D"):
+    name, p = br.TIMEFRAMES[tf]
+    rows = [("Index", index), ("Scan day", f"{day:%d %b %Y}"), ("Timeframe", name), ("Members", uni_note),
+            ("Price bands", band_note),
             ("Candles", "Yahoo Finance daily, split-adjusted, not dividend-adjusted"), ("", "")]
     rows += [(k, str(v)) for k, v in p.items()]
     return pd.DataFrame(rows, columns=["Setting", "Value"])
 
 
-def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_note, period=None) -> str:
-    """period: (start, end) for a date-range scan; None for one day."""
+def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_note, period=None, tf="D") -> str:
+    """period: (start, end) for a date-range scan; None for one day. tf: D, W or M."""
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     os.makedirs(out_dir, exist_ok=True)
     tag = f"{period[0]:%Y-%m-%d}_to_{period[1]:%Y-%m-%d}" if period else f"{day:%Y-%m-%d}"
     when = f"{period[0]:%d %b %Y} to {period[1]:%d %b %Y}" if period else f"{day:%d %b %Y}"
-    path = os.path.join(out_dir, f"burst_{index.replace(' ', '_')}_{tag}.xlsx")
-    summary = pd.DataFrame({"": [f"Momentum burst scan: {index}, {when}",
+    tfname = br.TIMEFRAMES[tf][0]
+    path = os.path.join(out_dir, f"burst_{tfname.lower()}_{index.replace(' ', '_')}_{tag}.xlsx")
+    summary = pd.DataFrame({"": [f"Momentum burst scan ({tfname.lower()} candles): {index}, {when}",
                                  f"{len(passed)} stock(s) passed every rule; {len(near)} near miss(es).", ""]
                             + [f"Warning: {w}" for w in warn]})
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
@@ -88,7 +96,7 @@ def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_not
         (passed if len(passed) else pd.DataFrame({"Result": ["No stock passed every rule on this day."]})) \
             .to_excel(xw, sheet_name="Passed", index=False)
         (near if len(near) else pd.DataFrame({"Result": ["No near misses."]})).to_excel(xw, sheet_name="Near misses", index=False)
-        settings_rows(index, day, uni_note, band_note).to_excel(xw, sheet_name="Settings", index=False)
+        settings_rows(index, day, uni_note, band_note, tf).to_excel(xw, sheet_name="Settings", index=False)
         if period:
             xw.book["Settings"]["A3"], xw.book["Settings"]["B3"] = "Period", when
         head = PatternFill("solid", fgColor="0B6B67")
@@ -108,7 +116,7 @@ def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_not
                     fmt = None
                     if h == "Date":
                         fmt = "dd-mmm-yyyy"
-                    elif h in ("Close", "Base high", "Stop (day low)", "Latest close"):
+                    elif h in ("Close", "Base high", "Stop (low)", "Latest close"):
                         fmt = "#,##0.00"
                     elif h and ("%" in h or h.startswith("Score") or "x " in h or h in ("Smooth R2", "Body share")):
                         fmt = "0.0" if h != "Smooth R2" and h != "Body share" else "0.00"
@@ -128,10 +136,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Momentum burst scanner (rule sheet v1)")
     ap.add_argument("--index", default="Nifty Total Market", choices=["Nifty Total Market", "Nifty 500"])
     ap.add_argument("--date", default=None, help="scan an earlier day, e.g. 2026-11-20 (default: latest)")
+    ap.add_argument("--timeframe", default="D", choices=["D", "W", "M"], help="D daily, W weekly, M monthly")
     ap.add_argument("--out", default=os.path.join(HERE, "output"), help="folder for the Excel file")
     a = ap.parse_args(argv)
     try:
-        out = run(a.index, a.date, a.out)
+        out = run(a.index, a.date, a.out, tf=a.timeframe)
     except RuntimeError as e:
         print(f"\nStopped: {e}")
         sys.exit(1)
@@ -140,10 +149,11 @@ def main(argv=None):
         print("WARNING:", w)
     print(out["funnel"].to_string(index=False))
     p = out["passed"]
-    print(f"\n{len(p)} stock(s) passed every rule on {out['day']:%d %b %Y}.")
+    print(f"\n{len(p)} stock(s) passed every rule ({br.TIMEFRAMES[a.timeframe][0].lower()} candles, "
+          f"bar ending {out['day']:%d %b %Y}).")
     if len(p):
-        cols = ["Symbol", "Score", "Close", "Change %", "Close range %", "Volume x 50d avg", "Base days",
-                "Base depth %", "Stop (day low)", "Risk %"]
+        cols = ["Symbol", "Score", "Close", "Change %", "Close range %", "Volume x avg", "Base length",
+                "Base depth %", "Stop (low)", "Risk %"]
         print(p[cols].round(1).to_string(index=False))
     print(f"\nNear misses: {len(out['near'])}. Full details: {out['path']}")
 

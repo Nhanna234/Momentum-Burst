@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { connect, embedded, sendValue, setFrameHeight } from "./streamlit.js";
-import { downloadBase64, fmtDate, fmtWeekday, readPref, writePref } from "./util.js";
+import { downloadBase64, fmtBar, readPref, writePref } from "./util.js";
 import TopBar from "./TopBar.jsx";
 import Summary from "./Summary.jsx";
 import CandidateList from "./CandidateList.jsx";
@@ -29,7 +29,8 @@ export default function App() {
   useEffect(() => {
     if (!args || req) return;
     const r = args.result;
-    setReq({ index: args.meta.index, mode: r.mode, day: r.end, preset: 10, start: r.start, end: r.end });
+    setReq({ index: args.meta.index, tf: args.meta.tf, mode: r.mode, day: r.end, preset: 10, start: r.start,
+             end: r.end });
   }, [args, req]);
 
   // keep the frame as tall as the content
@@ -79,9 +80,10 @@ export default function App() {
   }
   const { meta, excel } = args;
   const period = result.mode === "period";
+  const tfName = meta.tfs.find(([k]) => k === meta.tf)?.[1] || "Daily";
   const heading = period
-    ? `Breakouts from ${fmtDate(result.start)} to ${fmtDate(result.end)}`
-    : `Breakouts on ${fmtWeekday(result.end)}`;
+    ? `${tfName} breakouts, ${fmtBar(result.start, meta.tf)} to ${fmtBar(result.end, meta.tf)}`
+    : `${tfName} breakouts, ${fmtBar(result.end, meta.tf)}`;
 
   return (
     <div className={`app theme-${theme}`} data-busy={busy || undefined}>
@@ -111,10 +113,11 @@ export default function App() {
           <section className="headline">
             <h1>{heading}</h1>
             <p className="source">
-              {meta.index}, {meta.stocks} stocks. Prices from Yahoo Finance, downloaded {meta.fetchedAt}.
+              {meta.index}, {meta.stocks} stocks, {meta.unit === "day" ? "daily" : meta.unit + "ly"} candles built from
+              Yahoo Finance daily prices, downloaded {meta.fetchedAt}.
             </p>
           </section>
-          <Summary result={result} />
+          <Summary result={result} meta={meta} />
           <div className="workspace">
             <CandidateList
               rows={rows}

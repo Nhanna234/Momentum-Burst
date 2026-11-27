@@ -263,7 +263,7 @@ button, input, select { font: inherit; color: inherit; }
 .layer.LB { --layer: var(--LB); }
 .layer.LC { --layer: var(--LC); }
 .layer.LD { --layer: var(--LD); }
-.ln { color: var(--muted); margin: 0.15rem 0 0.5rem; }
+.ln { color: var(--muted); margin: 0.15rem 0 0.5rem; max-width: 80ch; }
 .layer ol { margin: 0; padding-left: 1.8rem; }
 .layer li { padding: 0.3rem 0; }
 .layer li::marker { color: var(--faint); font-family: "IBM Plex Sans Condensed", sans-serif; }
@@ -273,6 +273,14 @@ button, input, select { font: inherit; color: inherit; }
 .score-rules th, .score-rules td { text-align: left; padding: 0.5rem 0.6rem 0.5rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 .score-rules th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .score-rules .r { text-align: right; }
+.tf-table { margin: 0 0 1.8rem; }
+.tf-scroll { overflow-x: auto; }
+.tf-table table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; min-width: 640px; }
+.tf-table th, .tf-table td { text-align: left; padding: 0.45rem 0.7rem 0.45rem 0; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 0.88rem; }
+.tf-table th { color: var(--muted); font-weight: 500; }
+.tf-table td:first-child { font-weight: 600; white-space: nowrap; }
+.tf-table td.cur { background: var(--burst-soft); padding-left: 0.5rem; }
+.tf-table .rn { color: var(--faint); font-weight: 400; font-family: "IBM Plex Sans Condensed", sans-serif; margin-right: 0.2rem; }
 .limits { margin-top: 1.6rem; }
 .limits ul { padding-left: 1.2rem; max-width: 80ch; }
 .limits li { margin: 0.25rem 0; }

@@ -18,12 +18,12 @@ CHART_NEAR_LIMIT = 40       # near misses sent with their chart up front; others
 
 ROW_FIELDS = {              # column in the scan table -> key the front end uses
     "Symbol": "symbol", "Company": "company", "Industry": "industry", "Score": "score", "Close": "close",
-    "Change %": "change", "Close range %": "closeRange", "Volume x 50d avg": "volRatio",
-    "Range x ATR20": "rangeRatio", "Base days": "baseDays", "Base depth %": "baseDepth", "Base high": "baseHigh",
-    "Stop (day low)": "stop", "Risk %": "risk", "Above SMA65 %": "aboveSma", "Earlier bursts (30d)": "priorBursts",
-    "Erratic days (20d)": "erraticDays", "Traded value Rs cr": "tradedValue", "Price band %": "band",
+    "Change %": "change", "Close range %": "closeRange", "Volume x avg": "volRatio",
+    "Range x ATR": "rangeRatio", "Base length": "baseDays", "Base depth %": "baseDepth", "Base high": "baseHigh",
+    "Stop (low)": "stop", "Risk %": "risk", "Above SMA %": "aboveSma", "Earlier bursts": "priorBursts",
+    "Erratic bars": "erraticDays", "Traded value Rs cr": "tradedValue", "Price band %": "band",
     "F&O (no band)": "fno", "At upper circuit?": "upperCircuit", "Failed rules": "failed",
-    "Days since": "daysSince", "Latest close": "latestClose", "Change since %": "changeSince",
+    "Bars since": "daysSince", "Latest close": "latestClose", "Change since %": "changeSince",
     "High since %": "highSince", "Stop hit": "stopHit", "Chart": "tvLink",
 }
 
@@ -64,7 +64,7 @@ def chart_of(res: dict, sym: str, day, after: int) -> dict:
     last = min(len(idx) - 1, end + after)
     sel = idx[max(0, end - CHART_BEFORE): last + 1]
     o, h, l, c, v = (px[k].loc[sel, sym].values for k in ("Open", "High", "Low", "Close", "Volume"))
-    sma = m["sma65"].loc[sel, sym].values
+    sma = m["sma"].loc[sel, sym].values      # the timeframe's SMA (65 days, 30 weeks or 12 months)
     r2 = lambda x: None if pd.isna(x) else round(float(x), 2)
     candles = [{"t": t.strftime("%Y-%m-%d"), "o": r2(o[i]), "h": r2(h[i]), "l": r2(l[i]), "c": r2(c[i]),
                 "v": None if pd.isna(v[i]) else int(v[i]), "sma": r2(sma[i])}
@@ -109,16 +109,22 @@ def build(res: dict, mode: str, start, end, passed: pd.DataFrame, near: pd.DataF
 
 
 def meta(res: dict, index: str, indexes: list[str], uni_count: int, uni_note: str, band_note: str,
-         fetched_at, warnings: list[str]) -> dict:
+         fetched_at, warnings: list[str], tf: str = "D", partial_last: bool = False) -> dict:
     idx = res["score"].index
     usable = idx[idx >= br.first_usable_day(res)]
+    p = res["p"]
+    sheets = {k: br.rule_sheet(pp) for k, (_, pp) in br.TIMEFRAMES.items()}
     return {
         "index": index, "indexes": indexes, "stocks": uni_count, "universeNote": uni_note, "bandNote": band_note,
         "fetchedAt": fetched_at.strftime("%d %b %Y, %H:%M IST"), "warnings": warnings,
+        "tf": tf, "tfs": [[k, name] for k, (name, _) in br.TIMEFRAMES.items()],
+        "unit": p["unit"], "units": p["units"], "partialLast": bool(partial_last),
         "dates": [d.strftime("%Y-%m-%d") for d in usable],
-        "rules": [{"n": n, "layer": la, "name": nm, "rule": rule} for n, la, nm, rule in br.RULE_SHEET],
-        "layers": br.LAYERS, "weights": br.PARAMS["weights"],
-        "params": {k: (v if not isinstance(v, dict) else dict(v)) for k, v in br.PARAMS.items()},
+        "rules": [{"n": n, "layer": la, "name": nm, "rule": rule} for n, la, nm, rule in sheets[tf]],
+        "ruleTable": [{"n": n, "name": nm, **{k: sheets[k][n - 1][3] for k in sheets}}
+                      for n, la, nm, _ in sheets["D"]],
+        "layers": br.LAYERS, "weights": p["weights"],
+        "params": {k: (v if not isinstance(v, dict) else dict(v)) for k, v in p.items()},
     }
 
 

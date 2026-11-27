@@ -1,21 +1,24 @@
 import React from "react";
 
-const LAYER_NOTES = {
+const layerNotes = (unit) => ({
   A: "Which stocks are looked at.",
-  B: "What happens on the breakout day.",
+  B: `What happens in the breakout ${unit}.`,
   C: "How the stock behaved before it.",
   D: "Gates that keep out late, stretched or jumpy stocks.",
-};
+});
 
-const SCORE_ROWS = [
-  ["Smooth trend", "R² of a straight line through the log of the last 65 closes (0 if it slopes down)", "smooth"],
-  ["Tight base", "Base depth 3% scores full marks, 15% scores none, straight line between", "tight"],
-  ["Small wicks", "Average body ÷ range of the last 20 candles", "body"],
-  ["Few gaps", "Opening gaps of 3% or more in 20 days: none scores full, 4 or more score none", "gaps"],
-  ["Calm volatility", "ATR20 ÷ price: 2% scores full, 8% scores none", "calm"],
+const pc = (x) => `${Math.round(x * 1000) / 10}%`;
+const scoreRows = (p) => [
+  ["Smooth trend", `R² of a straight line through the log of the last ${p.r2_window} closes (0 if it slopes down)`,
+   "smooth"],
+  ["Tight base", `Base depth ${pc(p.base_depth_full)} scores full marks, ${pc(p.base_max_depth)} scores none, straight line between`, "tight"],
+  ["Small wicks", `Average body ÷ range of the last ${p.body_window} candles`, "body"],
+  ["Few gaps", `Opening gaps of ${pc(p.gap_size)} or more in ${p.gap_window} ${p.units}: none scores full, ${p.gaps_for_zero} or more score none`, "gaps"],
+  ["Calm volatility", `ATR${p.atr_window} ÷ price: ${pc(p.atr_pct_full)} scores full, ${pc(p.atr_pct_zero)} scores none`, "calm"],
 ];
 
 export default function RulesPage({ meta }) {
+  const tfName = meta.tfs.find(([k]) => k === meta.tf)?.[1] || "Daily";
   return (
     <main className="rules-page">
       <section className="intro">
@@ -23,12 +26,14 @@ export default function RulesPage({ meta }) {
         <p>
           A momentum burst is a 3–5 day move that starts when a quiet stock breaks out of a tight base on a strong,
           high-volume day. These 17 rules translate that idea, from Stockbee's post on good momentum bursts, into
-          exact checks on NSE daily candles. A stock is listed only if it passes all of them. The clean-chart
-          score then ranks the stocks that pass.
+          exact checks on NSE candles. A stock is listed only if it passes all of them. The clean-chart score then
+          ranks the stocks that pass. Below are the rules for the {tfName.toLowerCase()} timeframe chosen on the
+          Scanner page; the table further down compares all three.
         </p>
         <p className="small">
-          Daily candles. "Today" is the breakout day. ATR20 is the average daily range (high minus low) over the 20
-          days before it. Windows leave out the breakout day unless a rule says otherwise.
+          "The {meta.unit}" is the breakout {meta.unit}. ATR{meta.params.atr_window} is the average range (high minus
+          low) of the {meta.params.atr_window} {meta.units} before it. Windows leave out the breakout {meta.unit} unless
+          a rule says otherwise.
         </p>
       </section>
 
@@ -36,7 +41,7 @@ export default function RulesPage({ meta }) {
         {["A", "B", "C", "D"].map((g) => (
           <section key={g} className={`layer L${g}`}>
             <h2>{meta.layers[g]}</h2>
-            <p className="ln">{LAYER_NOTES[g]}</p>
+            <p className="ln">{layerNotes(meta.unit)[g]}</p>
             <ol>
               {meta.rules.filter((r) => r.layer === g).map((r) => (
                 <li key={r.n} value={r.n}>
@@ -49,13 +54,39 @@ export default function RulesPage({ meta }) {
         ))}
       </div>
 
+      <section className="tf-table">
+        <h2>Daily, weekly and monthly</h2>
+        <p className="ln">
+          Weekly and monthly candles are built from the daily prices: a week runs Monday to Friday, and each bar is
+          dated by its last trading day. The same 17 rules apply, with windows counted in weeks or months and moves
+          widened, because a week or a month moves more than a day. The weekly and monthly numbers are reasoned
+          starting values, not yet tested by a backtest.
+        </p>
+        <div className="tf-scroll">
+          <table>
+            <thead><tr><th>Rule</th>{meta.tfs.map(([k, name]) => <th key={k}>{name}</th>)}</tr></thead>
+            <tbody>
+              {meta.ruleTable.filter((r) =>
+                new Set(meta.tfs.map(([k]) => r[k])).size > 1).map((r) => (
+                <tr key={r.n}>
+                  <td><span className="rn">{r.n}</span> {r.name}</td>
+                  {meta.tfs.map(([k]) => <td key={k} className={k === meta.tf ? "cur" : ""}>{r[k]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="small">Rules not listed (in the index, price, price band, green candle, breakout) are the same
+          on every timeframe.</p>
+      </section>
+
       <section className="score-rules">
-        <h2>Clean-chart score, out of 100</h2>
+        <h2>Clean-chart score, out of 100 ({tfName.toLowerCase()})</h2>
         <p className="ln">Used only to rank stocks that passed every rule.</p>
         <table>
           <thead><tr><th>Part</th><th>Measure</th><th className="r">Points</th></tr></thead>
           <tbody>
-            {SCORE_ROWS.map(([name, how, k]) => (
+            {scoreRows(meta.params).map(([name, how, k]) => (
               <tr key={k}><td>{name}</td><td>{how}</td><td className="r">{meta.weights[k]}</td></tr>
             ))}
           </tbody>
