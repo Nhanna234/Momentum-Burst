@@ -1,4 +1,4 @@
-# Momentum burst scanner (Indian market, daily)
+# Momentum burst scanner (Indian market: daily, weekly, monthly)
 
 Finds stocks breaking out of a tight base with a strong, high-volume day (or week, or month), following the momentum burst idea from Stockbee's post ["How to identify good momentum burst and..."](https://stockbee.blogspot.com/2014/01/how-to-identify-good-momentum-burst-and.html), translated into exact rules for NSE stocks. Rule sheet v1 was approved on 26 Nov 2026.
 
@@ -41,7 +41,7 @@ Live at https://umme-abdullah.streamlit.app (Streamlit Community Cloud, main fil
 The screen is a React app in `frontend/`, built with Vite into `frontend/dist`, which Streamlit shows as a custom component. `app.py` loads the prices, runs the rules and sends the results to it (`payload.py` packs them); the React app sends back what the user picked (index, day or period) and Python reruns the scan.
 
 What it shows:
-- **Top bar:** timeframe (**Daily**, **Weekly** or **Monthly**), universe (Total Market or Nifty 500), **One day/week/month** or **Period** (last 5, 10, 20 or 60 sessions, or your own dates), previous/next day, Refresh prices, Download Excel, light/dark theme, and the Rules page.
+- **Top bar:** timeframe (**Daily**, **Weekly** or **Monthly**), universe (Total Market or Nifty 500), **One day/week/month** or **Period** (the last 5, 10, 20 or 60 days; 4, 8, 13 or 26 weeks; 3, 6, 12 or 24 months; or your own dates), previous/next bar, Refresh prices, Download Excel, light/dark theme, and the Rules page.
 - **Summary:** for one day, how many stocks survive each layer of rules; for a period, totals and a bar for each day.
 - **List:** Passed and Near misses, searchable and sortable. Each row has the clean-chart score, the day's change, the risk to the stop, and a strip of 17 cells, one per rule (filled = passed), so you can see at a glance what a near miss failed.
 - **Detail:** key figures, a TradingView-style candle chart (lightweight-charts) with the base high, the stop, the 65-day SMA and the breakout marked, the 17 rules with the value each was judged on, and the score broken into its five parts. In a period, the chart runs up to 30 sessions past the breakout and the row shows the change since.

@@ -5,6 +5,7 @@ Run (in Command Prompt, in this folder):
     python scan_burst.py                          -> Nifty Total Market, latest day
     python scan_burst.py --index "Nifty 500"
     python scan_burst.py --date 2026-11-20        -> scan an earlier day (to check the rules on past charts)
+    python scan_burst.py --timeframe W            -> weekly candles (M for monthly)
 
 Writes an Excel file to the output folder and prints a short summary.
 """
