@@ -249,8 +249,26 @@ def part3():
     print(f"part 3: range scan {len(rp)} passed + {len(rn)} near misses over 41 days, matches day-by-day scans")
 
 
+def part4():
+    """rule_checks agrees with the rule frames, and the screen's payload is valid JSON."""
+    import json
+    import payload as pl
+    stocks = {"GOOD": textbook(), **{f"S{k}": random_chart(k) for k in range(20)}}
+    res = br.compute(panel_of(stocks), pd.Series({s: 20.0 for s in stocks}))
+    bad = sum(c["pass"] != bool(res["r"][c["n"]].at[d, s])
+              for s in stocks for d in DAYS[100::5] for c in br.rule_checks(res, d, s)[1:])
+    assert bad == 0, bad
+    p, n = br.scan_range(res, DAYS[120], DAYS[-1])
+    out = pl.build(res, "period", DAYS[120], DAYS[-1], p, n, extra=[("S3", str(DAYS[150].date()))])
+    json.dumps(out, allow_nan=False)
+    assert all(r["id"] in out["charts"] for r in out["passed"])
+    assert all(len(r["rules"]) == 17 for r in out["passed"] + out["near"])
+    print(f"part 4: rule checks agree; payload with {len(out['charts'])} charts is valid JSON")
+
+
 if __name__ == "__main__":
     part1()
     part2()
     part3()
+    part4()
     print("ALL CHECKS PASSED")

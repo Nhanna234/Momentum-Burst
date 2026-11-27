@@ -6,3 +6,6 @@ textColor = "#1f2933"
 
 [server]
 headless = true
+
+[runner]
+magicEnabled = false

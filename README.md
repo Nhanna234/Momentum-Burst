@@ -6,7 +6,9 @@ Finds stocks breaking out of a tight base with a strong, high-volume day, follow
 
 | File | What it is |
 |---|---|
-| `app.py` | The web page (Streamlit): pick the universe and the day, see the lists and charts, download the Excel |
+| `app.py` | The web app: loads prices, runs the rules, hands the results to the React screen |
+| `payload.py` | Packs the results (rows, charts, rule checks) for the screen |
+| `frontend/` | The React + Vite screen (`src/` is the code, `dist/` the built files Streamlit serves) |
 | `scan_burst.py` | The same scan from the command line |
 | `burst_rules.py` | All the rules and every number they use (the `PARAMS` table at the top). No internet |
 | `burst_data.py` | Downloads: index lists (NSE Indices), price bands (NSE), daily candles (Yahoo Finance) |
@@ -31,20 +33,27 @@ Finds stocks breaking out of a tight base with a strong, high-volume day, follow
 
 **Timing for buying at the close.** Run it after 3:30 pm. If Yahoo already has today's final candle, buy in NSE's post-close session at the closing price. If the summary warns that today's candle isn't on Yahoo yet, run it again a few minutes later. Before 3:30 pm the list is provisional, because today's volume is incomplete.
 
-## Web page (Streamlit)
+## Web app
 
-On your PC: `streamlit run app.py` (the browser opens at http://localhost:8501).
+Live at https://umme-abdullah.streamlit.app (Streamlit Community Cloud, main file `app.py`, branch `main`). On your PC: `streamlit run app.py`.
 
-Online, on Streamlit Community Cloud (free):
-1. Go to share.streamlit.io and sign in with GitHub.
-2. Press **Create app**, then choose the repository `Nhanna234/Momentum-Burst`, branch `main`, main file `app.py`.
-3. Press **Deploy**. No secrets are needed.
+The screen is a React app in `frontend/`, built with Vite into `frontend/dist`, which Streamlit shows as a custom component. `app.py` loads the prices, runs the rules and sends the results to it (`payload.py` packs them); the React app sends back what the user picked (index, day or period) and Python reruns the scan.
 
-In the sidebar, **Show** switches between **One day** (the scan for a single day) and **A period** (every breakout on any day in the last 5, 10, 20 or 60 sessions, or between two dates you pick). In a period, each breakout also shows what the stock did afterwards, up to the latest candle: days since, change since, highest point since, and whether it later fell to the stop. These are not trade results: no exit rule or costs are applied, and older breakouts have had longer to move. Periods can start only once there is enough history for every rule, about four months after the first downloaded candle.
+What it shows:
+- **Top bar:** universe (Total Market or Nifty 500), **One day** or **Period** (last 5, 10, 20 or 60 sessions, or your own dates), previous/next day, Refresh prices, Download Excel, light/dark theme, and the Rules page.
+- **Summary:** for one day, how many stocks survive each layer of rules; for a period, totals and a bar for each day.
+- **List:** Passed and Near misses, searchable and sortable. Each row has the clean-chart score, the day's change, the risk to the stop, and a strip of 17 cells, one per rule (filled = passed), so you can see at a glance what a near miss failed.
+- **Detail:** key figures, a TradingView-style candle chart (lightweight-charts) with the base high, the stop, the 65-day SMA and the breakout marked, the 17 rules with the value each was judged on, and the score broken into its five parts. In a period, the chart runs up to 30 sessions past the breakout and the row shows the change since.
 
-The page shows the passed stocks and near misses, a candle chart of any of them (with the base high, the stop and the 65-day SMA marked), the Rules tab, and an Excel download. Pick an earlier day in the sidebar to check the rules on past charts. Prices are downloaded once and reused for 15 minutes; **Download fresh prices** forces a new download, which is useful just after 3:30 pm.
+**Changing the screen.** Streamlit Cloud does not build JavaScript, so the built files in `frontend/dist` are committed. After editing anything in `frontend/src`:
+```
+cd frontend
+npm install        (first time only)
+npm run build
+```
+then commit `frontend/dist` together with the source.
 
-Vercel cannot host this page: Streamlit needs a server that stays running, which Vercel does not provide.
+Vercel cannot host this app: Streamlit needs a server that stays running.
 
 ## The Excel file
 

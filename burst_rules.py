@@ -75,6 +75,26 @@ RULE_TEXT = {
     16: "Extended above the 65-day SMA",
     17: "Erratic stock",
 }
+RULE_SHEET = [   # (number, layer, short name, full rule) as approved in rule sheet v1
+    (1, "A", "In the index", "Constituent of Nifty Total Market or Nifty 500"),
+    (2, "A", "Price", "Close at least ₹50"),
+    (3, "A", "Liquidity", "20-day average traded value at least ₹1 crore"),
+    (4, "A", "Price band", "Price band above 5%, or no band (F&O stocks)"),
+    (5, "B", "Big move", "Close at least 4% above yesterday's close"),
+    (6, "B", "Volume", "Volume above yesterday's and at least 1.5 x the 50-day average"),
+    (7, "B", "Strong close", "Close in the top 30% of the day's range"),
+    (8, "B", "Green candle", "Close above the open"),
+    (9, "B", "Range expansion", "Day's range at least 1.5 x ATR20"),
+    (10, "C", "Quiet day before", "Yesterday's range below 0.8 x ATR20, or yesterday closed lower"),
+    (11, "C", "Base", "A 3-20 day base whose high is at most 15% above its low"),
+    (12, "C", "Breakout", "Close above the base high"),
+    (13, "C", "Contraction", "Average range of the last 5 days at most 0.8 x ATR50"),
+    (14, "D", "Uptrend", "Close above the 65-day SMA"),
+    (15, "D", "Early in the move", "At most 1 earlier breakout move in the last 30 sessions"),
+    (16, "D", "Not extended", "Close at most 25% above the 65-day SMA"),
+    (17, "D", "Not erratic", "At most 3 days with a 5%+ move in the last 20 sessions"),
+]
+LAYERS = {"A": "Universe", "B": "Trigger", "C": "Setup", "D": "Quality"}
 UNIVERSE_RULES = (2, 3, 4)
 TRIGGER_RULES = (5, 6, 7, 8, 9)
 SETUP_RULES = (10, 11, 12, 13)
@@ -150,7 +170,8 @@ def compute(panel: dict, bands: pd.Series | None = None, p: dict | None = None) 
     r[16] = C <= sma65 * (1 + p["max_extension"])
     r[17] = erratic <= p["max_erratic_days"]
     r = {k: v.fillna(False).astype(bool) for k, v in r.items()}
-    m.update(prior_triggers=prior, erratic_days=erratic)
+    m.update(prior_triggers=prior, erratic_days=erratic, yday_range_ratio=(H1 - L1) / atr20,
+             contraction=rng.shift(1).rolling(p["contraction_days"]).mean() / atr50)
 
     # ---- clean-chart score
     w = p["weights"]
@@ -303,3 +324,49 @@ def first_usable_day(res: dict):
                p["vol_avg_window"] + p["prior_trigger_window"] + 1)
     idx = res["score"].index
     return idx[min(need, len(idx) - 1)]
+
+
+def rule_checks(res: dict, day, sym: str) -> list[dict]:
+    """Rules 1-17 for one stock on one day: whether each passed and the value it was judged on."""
+    day = pd.Timestamp(day)
+    m, r, px, p = res["m"], res["r"], res["prices"], res["p"]
+
+    def g(frame):
+        v = frame.at[day, sym]
+        return None if pd.isna(v) else float(v)
+
+    def f(x, fmt):
+        return "–" if x is None else fmt.format(x)
+
+    C, O = g(px["Close"]), g(px["Open"])
+    band = None
+    if res["bands"] is not None:
+        b = pd.to_numeric(res["bands"].get(sym), errors="coerce")
+        band = "no band (F&O)" if b == np.inf else ("not listed" if pd.isna(b) else f"{b:g}%")
+    tv = g(m["traded_value"])
+    base_len, base_depth, base_high = g(m["base_len"]), g(m["base_depth"]), g(m["base_high"])
+    sma = g(m["sma65"])
+    vals = {
+        1: "member",
+        2: f(C, "close ₹{:,.2f}"),
+        3: f(None if tv is None else tv / 1e7, "₹{:,.1f} crore a day"),
+        4: band or "not checked",
+        5: f(None if g(m["change"]) is None else g(m["change"]) * 100, "{:+.1f}%"),
+        6: f(g(m["vol_ratio"]), "{:.1f} x average"),
+        7: f(None if g(m["close_range"]) is None else g(m["close_range"]) * 100, "closed at {:.0f}% of range"),
+        8: "green" if (C is not None and O is not None and C > O) else "red",
+        9: f(g(m["range_ratio"]), "{:.1f} x ATR20"),
+        10: f(g(m["yday_range_ratio"]), "range {:.2f} x ATR20"),
+        11: "none" if base_len is None else f"{base_len:.0f} days, {base_depth * 100:.1f}% deep",
+        12: "no base" if base_high is None or C is None else f"close {(C / base_high - 1) * 100:+.1f}% vs base high",
+        13: f(g(m["contraction"]), "{:.2f} x ATR50"),
+        14: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA65",
+        15: f(g(m["prior_triggers"]), "{:.0f} earlier"),
+        16: "–" if sma is None or C is None else f"{(C / sma - 1) * 100:+.1f}% vs SMA65",
+        17: f(g(m["erratic_days"]), "{:.0f} days"),
+    }
+    out = []
+    for n, layer, name, rule in RULE_SHEET:
+        ok = True if n == 1 else (True if (n == 4 and res["bands"] is None) else bool(r[n].at[day, sym]))
+        out.append({"n": n, "layer": layer, "name": name, "pass": ok, "value": vals[n]})
+    return out
