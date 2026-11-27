@@ -70,13 +70,16 @@ def settings_rows(index, day, uni_note, band_note):
     return pd.DataFrame(rows, columns=["Setting", "Value"])
 
 
-def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_note) -> str:
+def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_note, period=None) -> str:
+    """period: (start, end) for a date-range scan; None for one day."""
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"burst_{index.replace(' ', '_')}_{day:%Y-%m-%d}.xlsx")
-    summary = pd.DataFrame({"": [f"Momentum burst scan: {index}, {day:%d %b %Y}",
+    tag = f"{period[0]:%Y-%m-%d}_to_{period[1]:%Y-%m-%d}" if period else f"{day:%Y-%m-%d}"
+    when = f"{period[0]:%d %b %Y} to {period[1]:%d %b %Y}" if period else f"{day:%d %b %Y}"
+    path = os.path.join(out_dir, f"burst_{index.replace(' ', '_')}_{tag}.xlsx")
+    summary = pd.DataFrame({"": [f"Momentum burst scan: {index}, {when}",
                                  f"{len(passed)} stock(s) passed every rule; {len(near)} near miss(es).", ""]
                             + [f"Warning: {w}" for w in warn]})
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
@@ -86,6 +89,8 @@ def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_not
             .to_excel(xw, sheet_name="Passed", index=False)
         (near if len(near) else pd.DataFrame({"Result": ["No near misses."]})).to_excel(xw, sheet_name="Near misses", index=False)
         settings_rows(index, day, uni_note, band_note).to_excel(xw, sheet_name="Settings", index=False)
+        if period:
+            xw.book["Settings"]["A3"], xw.book["Settings"]["B3"] = "Period", when
         head = PatternFill("solid", fgColor="0B6B67")
         for ws in xw.book.worksheets:
             name = ws.title
@@ -101,7 +106,9 @@ def write_excel(out_dir, index, day, passed, near, fun, warn, uni_note, band_not
                 hdr = [c.value for c in ws[1]]
                 for j, h in enumerate(hdr, start=1):
                     fmt = None
-                    if h in ("Close", "Base high", "Stop (day low)"):
+                    if h == "Date":
+                        fmt = "dd-mmm-yyyy"
+                    elif h in ("Close", "Base high", "Stop (day low)", "Latest close"):
                         fmt = "#,##0.00"
                     elif h and ("%" in h or h.startswith("Score") or "x " in h or h in ("Smooth R2", "Body share")):
                         fmt = "0.0" if h != "Smooth R2" and h != "Body share" else "0.00"

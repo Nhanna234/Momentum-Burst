@@ -225,7 +225,32 @@ def part2():
         "rules 4-17 should pass on some days and fail on others (2 and 3 are covered by part 1)"
 
 
+def part3():
+    """scan_range: same rows as scan_day for each day, and correct after-the-breakout figures."""
+    stocks = {f"S{k}": random_chart(k) for k in range(40)}
+    res = br.compute(panel_of(stocks), None)
+    start, end = DAYS[150], DAYS[190]
+    rp, rn = br.scan_range(res, start, end)
+    n_p = sum(len(br.scan_day(res, d)[0]) for d in DAYS[150:191])
+    n_n = sum(len(br.scan_day(res, d)[1]) for d in DAYS[150:191])
+    assert len(rp) == n_p and len(rn) == n_n and n_p + n_n > 0, (len(rp), n_p, len(rn), n_n)
+    assert rp["Date"].between(start, end).all() if len(rp) else True
+    px = res["prices"]
+    for row in pd.concat([rp, rn]).to_dict("records"):
+        d, sym = row["Date"], row["Symbol"]
+        after = DAYS[DAYS > d]
+        c0 = px["Close"].at[d, sym]
+        assert row["Days since"] == len(after)
+        assert abs(row["Change since %"] - (px["Close"].at[DAYS[-1], sym] / c0 - 1) * 100) < 1e-9
+        if len(after):
+            assert abs(row["High since %"] - (px["High"].loc[after, sym].max() / c0 - 1) * 100) < 1e-9
+            assert bool(row["Stop hit"]) == (px["Low"].loc[after, sym].min() <= px["Low"].at[d, sym])
+    assert br.first_usable_day(res) == DAYS[81]
+    print(f"part 3: range scan {len(rp)} passed + {len(rn)} near misses over 41 days, matches day-by-day scans")
+
+
 if __name__ == "__main__":
     part1()
     part2()
+    part3()
     print("ALL CHECKS PASSED")

@@ -252,3 +252,54 @@ def funnel(res: dict, day) -> pd.DataFrame:
             mask &= r[k].loc[day].values
         steps.append((f"after {name}", int(mask.sum())))
     return pd.DataFrame(steps, columns=["Step", "Stocks left"])
+
+
+def scan_range(res: dict, start, end, near_misses: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Every day's scan from `start` to `end` (both included), one row per stock per breakout day, newest first.
+
+    Adds what happened after each breakout, up to the latest candle in the data:
+      Days since       trading days from the breakout day to the latest candle
+      Latest close     the latest close
+      Change since %   latest close / breakout-day close - 1
+      High since %     highest high after the breakout day / breakout-day close - 1
+      Stop hit         a low after the breakout day at or below the stop (the breakout day's low)"""
+    idx = res["score"].index
+    days = idx[(idx >= pd.Timestamp(start)) & (idx <= pd.Timestamp(end))]
+    px = res["prices"]
+    last = idx[-1]
+    out_p, out_n = [], []
+    for d in days:
+        p, n = scan_day(res, d)
+        for df, out in ((p, out_p), (n, out_n)):
+            if not len(df):
+                continue
+            df = df.copy()
+            df.insert(0, "Date", d)
+            after = idx[idx > d]
+            syms = df["Symbol"].values
+            c0 = px["Close"].loc[d, syms].values
+            df["Days since"] = len(after)
+            df["Latest close"] = px["Close"].loc[last, syms].values
+            df["Change since %"] = (df["Latest close"].values / c0 - 1) * 100
+            if len(after):
+                hi = px["High"].loc[after, syms].max().values
+                lo = px["Low"].loc[after, syms].min().values
+                df["High since %"] = (hi / c0 - 1) * 100
+                df["Stop hit"] = lo <= df["Stop (day low)"].values
+            else:
+                df["High since %"] = np.nan
+                df["Stop hit"] = False
+            out.append(df)
+    cat = lambda xs: (pd.concat(xs, ignore_index=True).sort_values(["Date", "Score"], ascending=[False, False])
+                      .reset_index(drop=True) if xs else pd.DataFrame())
+    return cat(out_p), (cat(out_n) if near_misses else pd.DataFrame())
+
+
+def first_usable_day(res: dict):
+    """The first day on which every rule and the score have enough history (the 65-day windows plus the
+    30-day look-back over earlier trigger days, which itself needs 50 days)."""
+    p = res["p"]
+    need = max(p["sma_window"], p["r2_window"] + 1, p["atr_long_window"] + p["prior_trigger_window"] + 1,
+               p["vol_avg_window"] + p["prior_trigger_window"] + 1)
+    idx = res["score"].index
+    return idx[min(need, len(idx) - 1)]

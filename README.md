@@ -40,7 +40,9 @@ Online, on Streamlit Community Cloud (free):
 2. Press **Create app**, then choose the repository `Nhanna234/Momentum-Burst`, branch `main`, main file `app.py`.
 3. Press **Deploy**. No secrets are needed.
 
-The page shows today's passed stocks and near misses, a candle chart of any of them (with the base high, the stop and the 65-day SMA marked), the Rules tab, and an Excel download. Pick an earlier day in the sidebar to check the rules on past charts. Prices are downloaded once and reused for 15 minutes; **Download fresh prices** forces a new download, which is useful just after 3:30 pm.
+In the sidebar, **Show** switches between **One day** (the scan for a single day) and **A period** (every breakout on any day in the last 5, 10, 20 or 60 sessions, or between two dates you pick). In a period, each breakout also shows what the stock did afterwards, up to the latest candle: days since, change since, highest point since, and whether it later fell to the stop. These are not trade results: no exit rule or costs are applied, and older breakouts have had longer to move. Periods can start only once there is enough history for every rule, about four months after the first downloaded candle.
+
+The page shows the passed stocks and near misses, a candle chart of any of them (with the base high, the stop and the 65-day SMA marked), the Rules tab, and an Excel download. Pick an earlier day in the sidebar to check the rules on past charts. Prices are downloaded once and reused for 15 minutes; **Download fresh prices** forces a new download, which is useful just after 3:30 pm.
 
 Vercel cannot host this page: Streamlit needs a server that stays running, which Vercel does not provide.
 

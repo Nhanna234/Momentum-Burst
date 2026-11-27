@@ -57,10 +57,12 @@ def get_result(name, fetched_at, _panel, _bands):
 
 
 # ════════════════════════════════════════════════════════════ chart
-def candle_chart(res, sym, day, row):
+def candle_chart(res, sym, day, row, after=0):
+    """Candles up to `after` sessions past the breakout day (0 = end at the breakout day)."""
     px = res["prices"]
     end = px["Close"].index.get_loc(day)
-    idx = px["Close"].index[max(0, end - 119): end + 1]
+    last = min(len(px["Close"].index) - 1, end + after)
+    idx = px["Close"].index[max(0, end - 119 + (last - end)): last + 1]
     df = pd.DataFrame({k: px[k].loc[idx, sym] for k in ("Open", "High", "Low", "Close", "Volume")})
     df["SMA65"] = res["m"]["sma65"].loc[idx, sym]
     df["Date"] = df.index
@@ -79,14 +81,19 @@ def candle_chart(res, sym, day, row):
         n = int(row["Base days"])
         start = px["Close"].index[end - n]
         marks.append({"y": row["Base high"], "x0": start, "x1": day, "label": "Base high"})
-    marks.append({"y": row["Stop (day low)"], "x0": idx[max(0, len(idx) - 15)], "x1": day, "label": "Stop"})
+    stop_from = px["Close"].index[max(0, end - 5)]           # stop line: a week before the breakout ...
+    stop_to = px["Close"].index[last]                        # ... to the last candle shown
+    marks.append({"y": row["Stop (day low)"], "x0": stop_from, "x1": stop_to, "label": "Stop"})
     mk = pd.DataFrame(marks)
+    if last > end:                                          # breakout day marker when later candles are shown
+        layers.append(alt.Chart(pd.DataFrame({"d": [day]})).mark_rule(color="#e6a23c", strokeDash=[2, 2])
+                      .encode(x="d:T"))
     layers.append(alt.Chart(mk).mark_rule(strokeWidth=2, color="#e6a23c").encode(x="x0:T", x2="x1:T", y="y:Q"))
     layers.append(alt.Chart(mk).mark_text(align="left", dx=2, dy=-7, color="#b7791f", fontSize=11).encode(
         x="x0:T", y="y:Q", text="label"))
-    price = alt.layer(*layers).properties(height=320)
+    price = alt.layer(*layers).properties(height=320, width="container")
     vol = base.mark_bar(size=4).encode(y=alt.Y("Volume:Q", title="Volume", axis=alt.Axis(format="~s")),
-                                       color=color).properties(height=90)
+                                       color=color).properties(height=90, width="container")
     return alt.vconcat(price, vol).resolve_scale(x="shared")
 
 
@@ -105,6 +112,10 @@ def column_config():
         "Smooth R2": NUM(format="%.2f"), "Body share": NUM(format="%.2f"), "Gaps (20d)": NUM(format="%d"),
         "ATR %": NUM(format="%.1f"), "Price band %": NUM(format="%g"),
         "Chart": st.column_config.LinkColumn("Chart", display_text="TradingView"),
+        "Date": st.column_config.DateColumn("Breakout day", format="DD MMM YYYY"),
+        "Days since": NUM(format="%d"), "Latest close": NUM(format="%.2f"),
+        "Change since %": NUM(format="%+.1f"), "High since %": NUM(format="%+.1f"),
+        "Stop hit": st.column_config.CheckboxColumn("Stop hit since"),
     }
     for k in br.PARAMS["weights"]:
         cfg[f"Score: {k}"] = NUM(format="%.1f")
@@ -138,17 +149,42 @@ with scan_tab:
     with st.spinner("Applying the rules…"):
         res = get_result(index, fetched_at, panel, bands)
     dates = res["score"].index
-    recent = [d.strftime("%Y-%m-%d") for d in dates[-60:][::-1]]
+    first_ok = br.first_usable_day(res)
+    usable = dates[dates >= first_ok]
     with st.sidebar:
-        day = st.selectbox("Scan day", recent, format_func=lambda d: pd.Timestamp(d).strftime("%a %d %b %Y"),
-                           help="The latest trading day first. Pick an earlier day to check the rules on past charts.")
-    day = pd.Timestamp(day)
-    passed, near = br.scan_day(res, day)
+        mode = st.radio("Show", ["One day", "A period"], horizontal=True,
+                        help="A period lists every breakout on any day in it, with what each stock did afterwards.")
+        if mode == "One day":
+            recent = [d.strftime("%Y-%m-%d") for d in usable[-60:][::-1]]
+            pick = st.selectbox("Scan day", recent, format_func=lambda d: pd.Timestamp(d).strftime("%a %d %b %Y"),
+                                help="The latest trading day first. Pick an earlier day to check past charts.")
+            start = end = pd.Timestamp(pick)
+        else:
+            preset = st.selectbox("Period", ["Last 5 sessions", "Last 10 sessions", "Last 20 sessions",
+                                             "Last 60 sessions", "Custom dates"], index=1)
+            if preset == "Custom dates":
+                rng = st.date_input("From – to", value=(usable[-20].date(), usable[-1].date()),
+                                    min_value=usable[0].date(), max_value=usable[-1].date(), format="DD/MM/YYYY")
+                if not isinstance(rng, (tuple, list)) or len(rng) != 2:
+                    st.info("Pick the end date too.")
+                    st.stop()
+                start, end = pd.Timestamp(rng[0]), pd.Timestamp(rng[1])
+            else:
+                n = int(preset.split()[1])
+                start, end = usable[-min(n, len(usable))], usable[-1]
+            st.caption(f"Earliest day with enough history: {usable[0]:%d %b %Y}.")
+    period = mode == "A period"
+    day = end
+    if period:
+        passed, near = br.scan_range(res, start, end)
+    else:
+        passed, near = br.scan_day(res, day)
     info = uni.set_index("Symbol")
     for df in (passed, near):
         if len(df):
-            df.insert(1, "Company", df["Symbol"].map(info["Company Name"]))
-            df.insert(2, "Industry", df["Symbol"].map(info["Industry"]))
+            pos = 2 if period else 1
+            df.insert(pos, "Company", df["Symbol"].map(info["Company Name"]))
+            df.insert(pos + 1, "Industry", df["Symbol"].map(info["Industry"]))
             df["Chart"] = df["Symbol"].map(scan_burst.tv_link)
 
     warns = []
@@ -164,57 +200,92 @@ with scan_tab:
     for w in warns:
         st.warning(w)
 
-    fun = br.funnel(res, day)
-    c = st.columns(5)
-    c[0].metric("Stocks scanned", int(fun.iloc[0, 1]))
-    c[1].metric("Liquid universe", int(fun.iloc[1, 1]))
-    c[2].metric("Breakout move", int(fun.iloc[2, 1]), help="Rules 2–9 passed")
-    c[3].metric("Passed every rule", len(passed))
-    c[4].metric("Near misses", len(near), help="Made the breakout move but failed a setup or quality rule")
+    if period:
+        counts = pd.DataFrame({"Day": [d for d in usable if start <= d <= end]})
+        counts["Passed"] = counts["Day"].map(passed["Date"].value_counts() if len(passed) else {}).fillna(0).astype(int)
+        counts["Near misses"] = counts["Day"].map(near["Date"].value_counts() if len(near) else {}).fillna(0).astype(int)
+        fun = counts.assign(Day=counts["Day"].dt.strftime("%d %b %Y")).rename(columns={"Day": "Step"})
+        c = st.columns(4)
+        c[0].metric("Sessions", len(counts))
+        c[1].metric("Breakouts that passed", len(passed))
+        c[2].metric("Different stocks", passed["Symbol"].nunique() if len(passed) else 0)
+        c[3].metric("Stop hit since", int(passed["Stop hit"].sum()) if len(passed) else 0,
+                    help="Breakouts whose stock later traded at or below the breakout day's low")
+    else:
+        fun = br.funnel(res, day)
+        c = st.columns(5)
+        c[0].metric("Stocks scanned", int(fun.iloc[0, 1]))
+        c[1].metric("Liquid universe", int(fun.iloc[1, 1]))
+        c[2].metric("Breakout move", int(fun.iloc[2, 1]), help="Rules 2–9 passed")
+        c[3].metric("Passed every rule", len(passed))
+        c[4].metric("Near misses", len(near), help="Made the breakout move but failed a setup or quality rule")
     st.caption(f"{index}: {len(uni)} stocks ({uni_note}). Prices: Yahoo Finance, downloaded "
                f"{fetched_at:%d %b %H:%M} IST. Price bands: {band_note}.")
 
-    st.subheader(f"Passed every rule on {day:%d %b %Y}")
+    when = f"{start:%d %b %Y} to {end:%d %b %Y}" if period else f"{day:%d %b %Y}"
+    st.subheader(f"Passed every rule, {when}")
     show = ["Symbol", "Company", "Industry", "Score", "Close", "Change %", "Close range %", "Volume x 50d avg",
             "Base days", "Base depth %", "Stop (day low)", "Risk %", "Above SMA65 %", "Chart"]
+    if period:
+        show = ["Date"] + show[:5] + ["Change %", "Stop (day low)", "Days since", "Latest close", "Change since %",
+                                      "High since %", "Stop hit", "Base days", "Base depth %", "Chart"]
+        show = list(dict.fromkeys(show))
     if "At upper circuit?" in passed.columns:
         show.insert(-1, "At upper circuit?")
     if len(passed):
         st.dataframe(passed[[c for c in show if c in passed]], hide_index=True, width="stretch",
                      column_config=column_config())
+        if period:
+            st.caption("Change since and high since run from the breakout day's close to the latest candle. They "
+                       "are not trade results: no stop, exit rule or costs are applied, and older breakouts have had "
+                       "longer to move.")
         with st.expander("All measures for these stocks"):
             st.dataframe(passed, hide_index=True, width="stretch", column_config=column_config())
     else:
-        st.info("No stock passed every rule on this day. The near misses below show what came closest.")
+        st.info("No stock passed every rule in this period." if period else
+                "No stock passed every rule on this day. The near misses below show what came closest.")
 
     st.subheader("Near misses")
     if len(near):
         cols = ["Symbol", "Company", "Failed rules", "Score", "Close", "Change %", "Close range %",
                 "Volume x 50d avg", "Base days", "Base depth %", "Risk %", "Chart"]
-        st.dataframe(near[[c for c in cols if c in near]], hide_index=True, width="stretch",
-                     column_config=column_config())
+        if period:
+            cols = ["Date"] + cols[:-1] + ["Change since %", "Stop hit", "Chart"]
+        if period and len(near) > 15:
+            with st.expander(f"{len(near)} near misses"):
+                st.dataframe(near[[c for c in cols if c in near]], hide_index=True, width="stretch",
+                             column_config=column_config())
+        else:
+            st.dataframe(near[[c for c in cols if c in near]], hide_index=True, width="stretch",
+                         column_config=column_config())
     else:
         st.write("None.")
 
-    pick_from = pd.concat([passed.assign(List="Passed"), near.assign(List="Near miss")]) \
+    pick_from = pd.concat([passed.assign(List="Passed"), near.assign(List="Near miss")], ignore_index=True) \
         if len(passed) or len(near) else pd.DataFrame()
     if len(pick_from):
         st.subheader("Chart")
-        sym = st.selectbox("Stock", pick_from["Symbol"].tolist(),
-                           format_func=lambda s: f"{s} ({pick_from.set_index('Symbol').at[s, 'List']})")
-        row = pick_from.set_index("Symbol").loc[sym]
-        st.altair_chart(candle_chart(res, sym, day, row), width="stretch")
-        st.caption("Last 120 trading days. Orange lines: the base high (rule 12) and the stop at the breakout "
-                   "day's low. Dashed grey line: 65-day SMA.")
+        if period:
+            labels = [f"{r.Symbol}  {r.Date:%d %b}  ({r.List})" for r in pick_from.itertuples()]
+        else:
+            labels = [f"{r.Symbol}  ({r.List})" for r in pick_from.itertuples()]
+        choice = st.selectbox("Stock", labels)
+        row = pick_from.iloc[labels.index(choice)]
+        bday = row["Date"] if period else day
+        st.altair_chart(candle_chart(res, row["Symbol"], bday, row, after=30 if period else 0), width="stretch")
+        st.caption("Orange lines: the base high (rule 12) and the stop at the breakout day's low"
+                   + (", dotted line: the breakout day, with up to 30 sessions after it" if period else "")
+                   + ". Dashed grey line: 65-day SMA.")
 
     path = scan_burst.write_excel(os.path.join(tempfile.gettempdir(), "momentum_burst_out"), index, day,
-                                  passed, near, fun, warns, uni_note, band_note)
+                                  passed, near, fun, warns, uni_note, band_note,
+                                  period=(start, end) if period else None)
     with open(path, "rb") as fh:
         st.download_button("Download this scan (Excel)", fh.read(), os.path.basename(path),
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    with st.expander("How many stocks each layer removed"):
-        st.dataframe(fun, hide_index=True)
+    with st.expander("Breakouts per day" if period else "How many stocks each layer removed"):
+        st.dataframe(fun.rename(columns={"Step": "Day"}) if period else fun, hide_index=True)
 
 with rules_tab:
     readme = os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
